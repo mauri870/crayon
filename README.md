@@ -6,11 +6,22 @@ A WIP CPU emulator for the Cray-1 supercomputer.
 
 ## What it is
 
-The Cray-1 (1976) was a 64-bit vector supercomputer designed by Seymour Cray. It had
-a 12.5 ns clock period and twelve pipelined functional units. Its defining feature was
-eight vector registers, each holding 64 64-bit elements — a single instruction could
-operate on all of them at once. This is the same idea behind modern SIMD instruction
-sets like AVX-512, predating them by decades.
+The Cray-1 was designed by Seymour Cray and first installed at Los Alamos National
+Laboratory in 1976. It held the title of world's fastest computer until 1982, with
+around 80 systems sold to government labs and universities at up to $8 million each.
+
+It had a 12.5 ns clock period and twelve pipelined functional units. Its defining
+feature was eight vector registers, each holding 64 64-bit elements. A single
+instruction could operate on all of them at once. This is the same idea behind
+modern SIMD instruction sets like AVX-512, predating them by decades. The machine
+also supported *chaining*: the output of one vector functional unit could feed
+directly into another before the first operation had finished, overlapping latency
+across dependent instructions.
+
+The cylindrical shape was an engineering constraint: no wire in the machine is
+longer than four feet. Shorter wires mean shorter signal propagation delays, which
+directly enables a faster clock. The padded bench at the base conceals the power
+supplies and a Freon cooling system — the machine consumed between 115 and 150 kW.
 
 ## Architecture
 
@@ -52,6 +63,7 @@ Up to 1,048,576 64-bit words in 16 interleaved banks. Word-addressed.
 
 ```
 cargo build
+cargo test
 ```
 
 ## References
