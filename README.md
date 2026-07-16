@@ -2,6 +2,8 @@
 
 A WIP CPU emulator for the Cray-1 supercomputer.
 
+![Cray-1](cray1.png)
+
 ## What it is
 
 The Cray-1 (1976) was a 64-bit vector supercomputer designed by Seymour Cray. It had

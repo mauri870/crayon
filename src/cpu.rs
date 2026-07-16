@@ -65,6 +65,32 @@ impl Default for Registers {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_a_masks_to_24_bits() {
+        let mut regs = Registers::new();
+        regs.write_a(0, 0xFF_ABCD_EF);
+        assert_eq!(regs.a[0], 0x00_ABCD_EF);
+    }
+
+    #[test]
+    fn write_b_masks_to_24_bits() {
+        let mut regs = Registers::new();
+        regs.write_b(0, 0xFF_123456);
+        assert_eq!(regs.b[0], 0x00_123456);
+    }
+
+    #[test]
+    fn write_vl_caps_at_64() {
+        let mut regs = Registers::new();
+        regs.write_vl(200);
+        assert_eq!(regs.vl, 64);
+    }
+}
+
 impl fmt::Display for Registers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "A  {:06X} {:06X} {:06X} {:06X} {:06X} {:06X} {:06X} {:06X}",
