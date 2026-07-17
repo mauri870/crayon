@@ -209,6 +209,57 @@ mod tests {
         assert_eq!(regs.vl, 64);
     }
 
+    // Encode a 16-bit parcel from octal opcode and register fields.
+    fn parcel(opcode: u8, i: u8, j: u8, k: u8) -> [u8; 2] {
+        let g = opcode >> 3;
+        let h = opcode & 0x7;
+        let word = ((g as u16) << 12) | ((h as u16) << 9)
+                 | ((i as u16) << 6) | ((j as u16) << 3) | (k as u16);
+        word.to_be_bytes()
+    }
+
+    // Encode a parcel where j:k form a 6-bit constant (shift/mask/small-constant instructions).
+    fn parcel_jk(opcode: u8, i: u8, jk: u8) -> [u8; 2] {
+        parcel(opcode, i, (jk >> 3) & 0x7, jk & 0x7)
+    }
+
+    fn cpu_with_program(bytes: &[u8]) -> Cpu {
+        let mut mem = Memory::new();
+        mem.load_program(bytes);
+        Cpu::new(mem)
+    }
+
+    #[test]
+    fn addr_transmit_constant() {
+        let [b0, b1] = parcel_jk(0o22, 1, 5); // A1 = 5
+        let [e0, e1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[b0, b1, e0, e1, 0, 0, 0, 0]);
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.a[1], 5);
+    }
+
+    #[test]
+    fn addr_add() {
+        let [a0, a1] = parcel_jk(0o22, 1, 3); // A1 = 3
+        let [b0, b1] = parcel_jk(0o22, 2, 5); // A2 = 5
+        let [c0, c1] = parcel(0o30, 3, 1, 2); // A3 = A1 + A2
+        let [e0, e1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, e0, e1]);
+        for _ in 0..3 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.a[3], 8);
+    }
+
+    #[test]
+    fn addr_sub() {
+        let [a0, a1] = parcel_jk(0o22, 1, 10); // A1 = 10
+        let [b0, b1] = parcel_jk(0o22, 2, 3);  // A2 = 3
+        let [c0, c1] = parcel(0o31, 3, 1, 2);  // A3 = A1 - A2
+        let [e0, e1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, e0, e1]);
+        for _ in 0..3 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.a[3], 7);
+    }
+
     #[test]
     fn step_normal_exit() {
         // opcode 004xxx = normal exit: g=0(0000b), h=4(100b) -> 0000_100_xxx = 0x0800...
