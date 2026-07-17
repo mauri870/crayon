@@ -154,6 +154,67 @@ impl Cpu {
             // Ai = Aj * Ak  (lower 24 bits of product)
             0o032 => self.regs.write_a(i, self.regs.a[j].wrapping_mul(self.regs.a[k])),
 
+            // --- Scalar transmit ---
+            // Si = 22-bit constant (zero-extended)
+            0o040 => self.regs.s[i] = d.addr22 as u64,
+            // Si = 0
+            0o043 => self.regs.s[i] = 0,
+            // Si = Ak (zero-extended from 24-bit)
+            0o071 if d.j == 0 => self.regs.s[i] = self.regs.a[k] as u64,
+            // Si = Ak (sign-extended from 24-bit)
+            0o071 if d.j == 1 => self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64,
+            // Si = Tjk
+            0o074 => self.regs.s[i] = self.regs.t[j << 3 | k],
+            // Tjk = Si
+            0o075 => self.regs.t[j << 3 | k] = self.regs.s[i],
+
+            // --- Scalar integer arithmetic ---
+            // Si = Sj + Sk
+            0o060 => self.regs.s[i] = self.regs.s[j].wrapping_add(self.regs.s[k]),
+            // Si = Sj - Sk
+            0o061 => self.regs.s[i] = self.regs.s[j].wrapping_sub(self.regs.s[k]),
+
+            // --- Scalar logical ---
+            // Si = Sj & Sk
+            0o044 => self.regs.s[i] = self.regs.s[j] & self.regs.s[k],
+            // Si = Sj & ~Sk
+            0o045 => self.regs.s[i] = self.regs.s[j] & !self.regs.s[k],
+            // Si = Sj ^ Sk
+            0o046 => self.regs.s[i] = self.regs.s[j] ^ self.regs.s[k],
+            // Si = ~(Sj ^ Sk)  (logical equivalence / XNOR)
+            0o047 => self.regs.s[i] = !(self.regs.s[j] ^ self.regs.s[k]),
+            // Si = (Si & ~Sk) | (Sj & Sk)  (merge: select Sj where Sk=1, Si where Sk=0)
+            0o050 => self.regs.s[i] = (self.regs.s[i] & !self.regs.s[k]) | (self.regs.s[j] & self.regs.s[k]),
+            // Si = (Si & ~mask) | (Sj & mask) where mask = sign bit of Sj broadcast
+            0o051 => {
+                let mask = ((self.regs.s[j] as i64) >> 63) as u64;
+                self.regs.s[i] = (self.regs.s[i] & !mask) | (self.regs.s[j] & mask);
+            }
+
+            // --- Scalar shifts ---
+            // S0 = Si << jk
+            0o052 => self.regs.s[0] = self.regs.s[i] << d.jk,
+            // S0 = Si >> (64 - jk)
+            0o053 => self.regs.s[0] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) },
+            // Si = Si << jk
+            0o054 => self.regs.s[i] <<= d.jk,
+            // Si = Si >> (64 - jk)
+            0o055 => self.regs.s[i] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) },
+            // Si = high 64 bits of (Si:Sj) << Ak  (double-length left shift)
+            0o056 => {
+                let count = (self.regs.a[k] & 0x7F) as u32;
+                self.regs.s[i] = if count == 0 { self.regs.s[i] }
+                    else if count >= 64 { self.regs.s[j] << (count - 64) }
+                    else { (self.regs.s[i] << count) | (self.regs.s[j] >> (64 - count)) };
+            }
+            // Si = low 64 bits of (Sj:Si) >> Ak  (double-length right shift)
+            0o057 => {
+                let count = (self.regs.a[k] & 0x7F) as u32;
+                self.regs.s[i] = if count == 0 { self.regs.s[i] }
+                    else if count >= 64 { self.regs.s[j] >> (count - 64) }
+                    else { (self.regs.s[j] << (64 - count)) | (self.regs.s[i] >> count) };
+            }
+
             _ => return Err(Trap::Unimplemented(d.opcode)),
         }
 
@@ -279,5 +340,83 @@ mod tests {
         let mut cpu = Cpu::new(mem);
         let _ = cpu.step();
         assert_eq!(cpu.regs.p, 1);
+    }
+
+    #[test]
+    fn scalar_add() {
+        // S1 = 10, S2 = 32; S3 = S1 + S2 = 42
+        let [a0, a1] = parcel_jk(0o22, 1, 10); // A1 = 10
+        let [b0, b1] = parcel(0o071, 1, 0, 1); // S1 = A1 (zero-extend)
+        let [c0, c1] = parcel_jk(0o22, 2, 32); // A2 = 32
+        let [d0, d1] = parcel(0o071, 2, 0, 2); // S2 = A2
+        let [e0, e1] = parcel(0o060, 3, 1, 2); // S3 = S1 + S2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, d0, d1, e0, e1, x0, x1, 0, 0, 0, 0]);
+        for _ in 0..5 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[3], 42);
+    }
+
+    #[test]
+    fn scalar_sub() {
+        let [a0, a1] = parcel_jk(0o22, 1, 20); // A1 = 20
+        let [b0, b1] = parcel(0o071, 1, 0, 1); // S1 = A1
+        let [c0, c1] = parcel_jk(0o22, 2, 7);  // A2 = 7
+        let [d0, d1] = parcel(0o071, 2, 0, 2); // S2 = A2
+        let [e0, e1] = parcel(0o061, 3, 1, 2); // S3 = S1 - S2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, d0, d1, e0, e1, x0, x1, 0, 0, 0, 0]);
+        for _ in 0..5 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[3], 13);
+    }
+
+    #[test]
+    fn scalar_and() {
+        // S1 = 0xFF, S2 = 0x0F; S3 = S1 & S2 = 0x0F
+        let [a0, a1] = parcel_jk(0o22, 1, 0o77); // A1 = 63 (0x3F max in 6 bits)
+        let [b0, b1] = parcel(0o071, 1, 0, 1);
+        let [c0, c1] = parcel_jk(0o22, 2, 0o17); // A2 = 15
+        let [d0, d1] = parcel(0o071, 2, 0, 2);
+        let [e0, e1] = parcel(0o044, 3, 1, 2);   // S3 = S1 & S2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, d0, d1, e0, e1, x0, x1, 0, 0, 0, 0]);
+        for _ in 0..5 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[3], 0x3F & 0x0F);
+    }
+
+    #[test]
+    fn scalar_xor() {
+        let [a0, a1] = parcel_jk(0o22, 1, 0o77); // A1 = 63
+        let [b0, b1] = parcel(0o071, 1, 0, 1);
+        let [c0, c1] = parcel_jk(0o22, 2, 0o17); // A2 = 15
+        let [d0, d1] = parcel(0o071, 2, 0, 2);
+        let [e0, e1] = parcel(0o046, 3, 1, 2);   // S3 = S1 ^ S2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, d0, d1, e0, e1, x0, x1, 0, 0, 0, 0]);
+        for _ in 0..5 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[3], 0x3F ^ 0x0F);
+    }
+
+    #[test]
+    fn scalar_shift_left() {
+        // S1 = 1; S0 = S1 << 4 = 16 (opcode 052: S0 = Si << jk)
+        let [a0, a1] = parcel_jk(0o22, 1, 1); // A1 = 1
+        let [b0, b1] = parcel(0o071, 1, 0, 1); // S1 = A1
+        let [c0, c1] = parcel_jk(0o052, 1, 4); // S0 = S1 << 4
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        for _ in 0..3 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[0], 16);
+    }
+
+    #[test]
+    fn scalar_zero() {
+        // Si = 0 (opcode 043)
+        let [a0, a1] = parcel_jk(0o22, 1, 63); // A1 = 63
+        let [b0, b1] = parcel(0o071, 1, 0, 1); // S1 = A1
+        let [c0, c1] = parcel(0o043, 1, 0, 0); // S1 = 0
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        for _ in 0..3 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.s[1], 0);
     }
 }
