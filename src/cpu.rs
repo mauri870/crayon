@@ -236,6 +236,35 @@ impl Cpu {
                     else { (self.regs.s[j] << (64 - count)) | (self.regs.s[i] >> count) };
             }
 
+            // --- Memory load/store ---
+            // The Ah base register is encoded in the low 3 bits of the opcode (the h field).
+            // Effective word address = Ah + addr22; result/source register is i.
+            //
+            // 0o100-0o107: Ai = mem[Ah + addr22]  (lower 24 bits of the 64-bit word)
+            // 0o110-0o117: mem[Ah + addr22] = Ai
+            // 0o120-0o127: Si = mem[Ah + addr22]
+            // 0o130-0o137: mem[Ah + addr22] = Si
+            0o100..=0o107 => {
+                let base = self.regs.a[(d.opcode & 7) as usize];
+                let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
+                self.regs.write_a(i, self.mem.read(addr) as u32);
+            }
+            0o110..=0o117 => {
+                let base = self.regs.a[(d.opcode & 7) as usize];
+                let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
+                self.mem.write(addr, self.regs.a[i] as u64);
+            }
+            0o120..=0o127 => {
+                let base = self.regs.a[(d.opcode & 7) as usize];
+                let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
+                self.regs.s[i] = self.mem.read(addr);
+            }
+            0o130..=0o137 => {
+                let base = self.regs.a[(d.opcode & 7) as usize];
+                let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
+                self.mem.write(addr, self.regs.s[i]);
+            }
+
             _ => return Err(Trap::Unimplemented(d.opcode)),
         }
 
@@ -443,6 +472,78 @@ mod tests {
 
     // Encode the second parcel of a long instruction (a bare 16-bit value).
     fn p1(val: u16) -> [u8; 2] { val.to_be_bytes() }
+
+    // Encode a 32-bit memory instruction: first parcel (opcode, i, addr22 upper 6 bits)
+    // followed immediately by the second parcel (addr22 lower 16 bits).
+    // For word addresses < 65536 the upper 6 bits (jk) are zero.
+    fn mem_instr(opcode: u8, i: u8, word_addr: u32) -> [u8; 4] {
+        let jk = ((word_addr >> 16) & 0x3F) as u8;
+        let [p0, p1_lo] = parcel(opcode, i, (jk >> 3) & 0x7, jk & 0x7);
+        let [p1_hi, p1_lo2] = (word_addr as u16).to_be_bytes();
+        [p0, p1_lo, p1_hi, p1_lo2]
+    }
+
+    #[test]
+    fn mem_load_s_from_word_addr() {
+        // Write a known value to word 10, then load it into S1 via 0o120 (load S, Ah=A0=0).
+        // Program: S1 = mem[0 + 10]
+        let [l0, l1, l2, l3] = mem_instr(0o120, 1, 10); // Si = mem[A0 + 10]
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[l0, l1, l2, l3, ex0, ex1, 0, 0]);
+        cpu.mem.write(10, 0xCAFE_0000_1234_5678);
+        cpu.step().unwrap(); // load S1 = mem[10]
+        assert_eq!(cpu.regs.s[1], 0xCAFE_0000_1234_5678);
+    }
+
+    #[test]
+    fn mem_store_s_then_load() {
+        // S2 = 0x1234; store to word 20; load back into S3.
+        let [s0, s1, s2, s3] = mem_instr(0o130, 2, 20); // mem[20] = S2
+        let [l0, l1, l2, l3] = mem_instr(0o120, 3, 20); // S3 = mem[20]
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[s0, s1, s2, s3, l0, l1, l2, l3, ex0, ex1, 0, 0, 0, 0, 0, 0]);
+        cpu.regs.s[2] = 0x1234;
+        cpu.step().unwrap(); // store
+        cpu.step().unwrap(); // load
+        assert_eq!(cpu.regs.s[3], 0x1234);
+    }
+
+    #[test]
+    fn mem_load_a_lower_24_bits() {
+        // mem[5] = 0xFFFF_FFFF_00AB_CDEF; load into A1 → masked to 24 bits = 0xABCDEF
+        let [l0, l1, l2, l3] = mem_instr(0o100, 1, 5); // Ai = mem[A0 + 5] (lower 24 bits)
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[l0, l1, l2, l3, ex0, ex1, 0, 0]);
+        cpu.mem.write(5, 0xFFFF_FFFF_00AB_CDEF);
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.a[1], 0x00AB_CDEF);
+    }
+
+    #[test]
+    fn mem_store_a_then_reload() {
+        // A1 = 42; store to word 30; load back into A2.
+        let [s0, s1, s2, s3] = mem_instr(0o110, 1, 30); // mem[30] = A1
+        let [l0, l1, l2, l3] = mem_instr(0o100, 2, 30); // A2 = mem[30]
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[s0, s1, s2, s3, l0, l1, l2, l3, ex0, ex1, 0, 0, 0, 0, 0, 0]);
+        cpu.regs.a[1] = 42;
+        cpu.step().unwrap(); // store
+        cpu.step().unwrap(); // load
+        assert_eq!(cpu.regs.a[2], 42);
+    }
+
+    #[test]
+    fn mem_indexed_load() {
+        // Use A1 as base (=100), load S3 from mem[A1 + 5] = mem[105].
+        // opcode 0o121 = load S with Ah=A1.
+        let [l0, l1, l2, l3] = mem_instr(0o121, 3, 5); // S3 = mem[A1 + 5]
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[l0, l1, l2, l3, ex0, ex1, 0, 0]);
+        cpu.regs.a[1] = 100;
+        cpu.mem.write(105, 0xDEAD_BEEF);
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.s[3], 0xDEAD_BEEF);
+    }
 
     #[test]
     fn branch_unconditional() {
