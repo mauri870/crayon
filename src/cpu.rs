@@ -127,6 +127,27 @@ impl Cpu {
             0o000 => return Err(Trap::ErrorExit),
             0o004 => return Err(Trap::NormalExit),
 
+            // --- Branches and jumps ---
+            // J Bjk: unconditional jump to parcel address stored in B register jk (16-bit)
+            0o005 if d.i == 0 => self.regs.p = self.regs.b[j << 3 | k],
+            // J exp: unconditional jump to 25-bit parcel address exp (32-bit)
+            0o005 | 0o006 => self.regs.p = d.addr25,
+            // R exp: return jump — save return address in B00, then jump to exp
+            0o007 => {
+                self.regs.write_b(0, self.regs.p);
+                self.regs.p = d.addr25;
+            }
+            // Conditional branches on A0: JAZ, JAN, JAP, JAM
+            0o010 => if self.regs.a[0] == 0                              { self.regs.p = d.addr25; }
+            0o011 => if self.regs.a[0] != 0                              { self.regs.p = d.addr25; }
+            0o012 => if self.regs.a[0] & (1 << 23) == 0 && self.regs.a[0] != 0 { self.regs.p = d.addr25; }
+            0o013 => if self.regs.a[0] & (1 << 23) != 0                 { self.regs.p = d.addr25; }
+            // Conditional branches on S0: JSZ, JSN, JSP, JSM
+            0o014 => if self.regs.s[0] == 0                              { self.regs.p = d.addr25; }
+            0o015 => if self.regs.s[0] != 0                              { self.regs.p = d.addr25; }
+            0o016 => if (self.regs.s[0] as i64) > 0                     { self.regs.p = d.addr25; }
+            0o017 => if (self.regs.s[0] as i64) < 0                     { self.regs.p = d.addr25; }
+
             // VL: transmit (Ak) to VL register
             0o020 => self.regs.write_vl(self.regs.a[k] as u8),
             // VM: transmit (Sj) to VM
@@ -418,5 +439,79 @@ mod tests {
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
         for _ in 0..3 { cpu.step().unwrap(); }
         assert_eq!(cpu.regs.s[1], 0);
+    }
+
+    // Encode the second parcel of a long instruction (a bare 16-bit value).
+    fn p1(val: u16) -> [u8; 2] { val.to_be_bytes() }
+
+    #[test]
+    fn branch_unconditional() {
+        // J exp (0o006): jump from P=0 over error at P=2 to normal exit at P=4.
+        // Layout: [J_p0][J_p1=4][err][exit]
+        let [j0, j1] = parcel(0o06, 0, 0, 0); // J (first parcel, addr25 upper 9 bits = 0)
+        let [t0, t1] = p1(4);                   // second parcel: target = parcel 4
+        let [er0, er1] = parcel(0o00, 0, 0, 0); // error exit at P=2 — must NOT run
+        let [pad0, pad1] = [0u8, 0u8];          // unused parcel 3
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0); // normal exit at P=4
+        let prog = [j0, j1, t0, t1, er0, er1, pad0, pad1, ex0, ex1, 0, 0, 0, 0, 0, 0];
+        let mut cpu = cpu_with_program(&prog);
+        cpu.step().unwrap();  // J: should set P=4, not 2
+        assert_eq!(cpu.regs.p, 4);
+        assert_eq!(cpu.step(), Err(Trap::NormalExit));
+    }
+
+    #[test]
+    fn branch_jaz_taken() {
+        // A0 = 0; JAZ jumps to parcel 4 (normal exit), skipping error at parcel 3.
+        let [a0, a1] = parcel_jk(0o22, 0, 0); // A0 = 0  (P=0)
+        let [j0, j1] = parcel(0o10, 0, 0, 0); // JAZ first parcel  (P=1)
+        let [t0, t1] = p1(4);                  // second parcel: target = parcel 4  (P=2)
+        let [er, _]  = parcel(0o00, 0, 0, 0);  // error exit  (P=3 — not reached)
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0);
+        let prog = [a0, a1, j0, j1, t0, t1, er, 0, ex0, ex1, 0, 0, 0, 0, 0, 0];
+        let mut cpu = cpu_with_program(&prog);
+        cpu.step().unwrap(); // A0 = 0
+        cpu.step().unwrap(); // JAZ taken: P should become 4
+        assert_eq!(cpu.regs.p, 4);
+        assert_eq!(cpu.step(), Err(Trap::NormalExit));
+    }
+
+    #[test]
+    fn branch_jaz_not_taken() {
+        // A0 = 5; JAZ is NOT taken; falls through to normal exit at P=3.
+        let [a0, a1] = parcel_jk(0o22, 0, 5); // A0 = 5  (P=0)
+        let [j0, j1] = parcel(0o10, 0, 0, 0); // JAZ first parcel  (P=1)
+        let [t0, t1] = p1(8);                  // second parcel: target = parcel 8 (never reached)
+        let [ex0, ex1] = parcel(0o04, 0, 0, 0); // normal exit at P=3
+        let prog = [a0, a1, j0, j1, t0, t1, ex0, ex1, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut cpu = cpu_with_program(&prog);
+        cpu.step().unwrap(); // A0 = 5
+        cpu.step().unwrap(); // JAZ not taken: P stays at 3
+        assert_eq!(cpu.regs.p, 3);
+        assert_eq!(cpu.step(), Err(Trap::NormalExit));
+    }
+
+    #[test]
+    fn branch_jan_loop() {
+        // Count A0 down from 5 to 0 via JAN back to the decrement.
+        // P=0: A0 = 5
+        // P=1: A1 = 1
+        // P=2: A0 = A0 - A1   (loop body)
+        // P=3: JAN first parcel  → if A0 ≠ 0 jump to P=2
+        // P=4: JAN second parcel (target = 2)
+        // P=5: normal exit
+        let [a0, a1]   = parcel_jk(0o22, 0, 5); // A0 = 5
+        let [b0, b1]   = parcel_jk(0o22, 1, 1); // A1 = 1
+        let [dec0, dec1] = parcel(0o31, 0, 0, 1); // A0 = A0 - A1
+        let [jan0, jan1] = parcel(0o11, 0, 0, 0); // JAN (ijk=0, upper 9 bits of target)
+        let [tgt0, tgt1] = p1(2);                  // second parcel: target = parcel 2
+        let [ex0, ex1]   = parcel(0o04, 0, 0, 0);
+        let prog = [
+            a0, a1, b0, b1, dec0, dec1, jan0, jan1,  // word 0 (P=0..3)
+            tgt0, tgt1, ex0, ex1, 0, 0, 0, 0,         // word 1 (P=4..7)
+        ];
+        let mut cpu = cpu_with_program(&prog);
+        while cpu.step().is_ok() {}
+        assert_eq!(cpu.regs.a[0], 0);
     }
 }
