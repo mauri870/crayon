@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::fp;
 use crate::ibuffer::InstructionBuffers;
 use crate::instr::decode;
 use crate::memory::Memory;
@@ -184,6 +185,8 @@ impl Cpu {
             0o071 if d.j == 0 => self.regs.s[i] = self.regs.a[k] as u64,
             // Si = Ak (sign-extended from 24-bit)
             0o071 if d.j == 1 => self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64,
+            // Si = Ak as unnormalized floating point (j=2)
+            0o071 if d.j == 2 => self.regs.s[i] = fp::from_f64(self.regs.a[k] as f64),
             // Si = Tjk
             0o074 => self.regs.s[i] = self.regs.t[j << 3 | k],
             // Tjk = Si
@@ -200,6 +203,22 @@ impl Cpu {
                 let elem = self.regs.a[k] as usize & 63;
                 self.regs.v[i][elem] = self.regs.s[j];
             }
+
+            // --- Scalar floating point (0o062-0o070) ---
+            // Si = Sj + Sk (FP add; j=0 with S0=0 normalizes Sk)
+            0o062 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) + fp::to_f64(self.regs.s[k])),
+            // Si = Sj - Sk (FP sub; j=0 with S0=0 negates and normalizes Sk)
+            0o063 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) - fp::to_f64(self.regs.s[k])),
+            // Si = Sj * Sk (FP multiply, truncated)
+            0o064 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
+            // Si = Sj * Sk (half-precision rounded)
+            0o065 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
+            // Si = Sj * Sk (full-precision rounded)
+            0o066 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
+            // Si = 2 * Sj * Sk
+            0o067 => self.regs.s[i] = fp::from_f64(2.0 * fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
+            // Si = reciprocal approximation of Sj
+            0o070 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]).recip()),
 
             // --- Scalar integer arithmetic ---
             // Si = Sj + Sk
@@ -276,6 +295,25 @@ impl Cpu {
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.s[i]);
             }
+
+            // --- Vector floating point multiply (0o160-0o167) ---
+            0o160 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
+            0o161 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
+            0o162 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
+            0o163 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
+            0o164 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
+            0o165 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
+            0o166 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * sv * fp::to_f64(self.regs.v[k][n])); } }
+            0o167 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
+
+            // --- Vector floating point add/sub (0o170-0o173) ---
+            0o170 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv + fp::to_f64(self.regs.v[k][n])); } }
+            0o171 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) + fp::to_f64(self.regs.v[k][n])); } }
+            0o172 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv - fp::to_f64(self.regs.v[k][n])); } }
+            0o173 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) - fp::to_f64(self.regs.v[k][n])); } }
+
+            // --- Vector floating point reciprocal (0o174) ---
+            0o174 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]).recip()); } }
 
             // --- Vector logical (0o140-0o147) ---
             // VM bit n = bit (63-n) of the vm u64 (Cray-1 bit 0 = MSB convention).
@@ -610,7 +648,7 @@ mod tests {
 
     #[test]
     fn mem_load_a_lower_24_bits() {
-        // mem[5] = 0xFFFF_FFFF_00AB_CDEF; load into A1 → masked to 24 bits = 0xABCDEF
+        // mem[5] = 0xFFFF_FFFF_00AB_CDEF; load into A1 -> masked to 24 bits = 0xABCDEF
         let [l0, l1, l2, l3] = mem_instr(0o100, 1, 5); // Ai = mem[A0 + 5] (lower 24 bits)
         let [ex0, ex1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[l0, l1, l2, l3, ex0, ex1, 0, 0]);
@@ -693,6 +731,58 @@ mod tests {
     }
 
     #[test]
+    fn fp_add() {
+        // S3 = S1 + S2 in floating point
+        let [a0, a1] = parcel(0o062, 3, 1, 2);  // S3 = S1 + S2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, x0, x1]);
+        cpu.regs.s[1] = crate::fp::from_f64(1.5);
+        cpu.regs.s[2] = crate::fp::from_f64(2.5);
+        cpu.step().unwrap();
+        assert_eq!(crate::fp::to_f64(cpu.regs.s[3]), 4.0);
+    }
+
+    #[test]
+    fn fp_mul() {
+        // S3 = S1 * S2
+        let [a0, a1] = parcel(0o064, 3, 1, 2);
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, x0, x1]);
+        cpu.regs.s[1] = crate::fp::from_f64(3.0);
+        cpu.regs.s[2] = crate::fp::from_f64(4.0);
+        cpu.step().unwrap();
+        assert_eq!(crate::fp::to_f64(cpu.regs.s[3]), 12.0);
+    }
+
+    #[test]
+    fn fp_recip() {
+        // S2 = 1/S1
+        let [a0, a1] = parcel(0o070, 2, 1, 0);
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, x0, x1]);
+        cpu.regs.s[1] = crate::fp::from_f64(4.0);
+        cpu.step().unwrap();
+        assert_eq!(crate::fp::to_f64(cpu.regs.s[2]), 0.25);
+    }
+
+    #[test]
+    fn fp_normalize_via_add() {
+        // Normalize S1 by adding 0 (S0=0): S2 = S0 + S1 = normalize(S1)
+        let [a0, a1] = parcel(0o062, 2, 0, 1);  // S2 = S0 + S1
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, x0, x1]);
+        // Build an unnormalized FP word for 1.0 (bit 47 clear)
+        let one = crate::fp::from_f64(1.0);
+        let exp = (one >> 48) & 0x7FFF;
+        let coeff = one & 0x0000_FFFF_FFFF_FFFF;
+        let unnorm = ((exp + 4) << 48) | (coeff >> 4); // shift right 4, compensate exponent
+        cpu.regs.s[0] = 0; // additive identity
+        cpu.regs.s[1] = unnorm;
+        cpu.step().unwrap();
+        assert_eq!(crate::fp::to_f64(cpu.regs.s[2]), 1.0);
+    }
+
+    #[test]
     fn vector_add_vv() {
         // V0 = V1 + V2 element-wise with VL=4
         let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
@@ -760,7 +850,7 @@ mod tests {
 
     #[test]
     fn vector_mask_test_zero() {
-        // vmtest_z on V1=[0,5,0,3] with VL=4 → VM bits set for elements 0 and 2
+        // vmtest_z on V1=[0,5,0,3] with VL=4 -> VM bits set for elements 0 and 2
         let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
         let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o175, 0, 1, 0);  // VM = (V1[n]==0)
@@ -790,10 +880,10 @@ mod tests {
         cpu.step().unwrap();
         cpu.step().unwrap();
         cpu.step().unwrap();
-        assert_eq!(cpu.regs.v[0][0], 100); // VM=1 → V1
-        assert_eq!(cpu.regs.v[0][1], 201); // VM=0 → V2
-        assert_eq!(cpu.regs.v[0][2], 102); // VM=1 → V1
-        assert_eq!(cpu.regs.v[0][3], 203); // VM=0 → V2
+        assert_eq!(cpu.regs.v[0][0], 100); // VM=1 -> V1
+        assert_eq!(cpu.regs.v[0][1], 201); // VM=0 -> V2
+        assert_eq!(cpu.regs.v[0][2], 102); // VM=1 -> V1
+        assert_eq!(cpu.regs.v[0][3], 203); // VM=0 -> V2
     }
 
     #[test]
@@ -837,7 +927,7 @@ mod tests {
         // P=0: A0 = 5
         // P=1: A1 = 1
         // P=2: A0 = A0 - A1   (loop body)
-        // P=3: JAN first parcel  → if A0 ≠ 0 jump to P=2
+        // P=3: JAN first parcel  -> if A0 ≠ 0 jump to P=2
         // P=4: JAN second parcel (target = 2)
         // P=5: normal exit
         let [a0, a1]   = parcel_jk(0o22, 0, 5); // A0 = 5

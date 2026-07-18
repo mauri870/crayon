@@ -85,11 +85,79 @@
     ; 071 Si = Ak (zero-extend from 24-bit)
     s_a {i: u3}, {k: u3}              => 0b0111001`7 @ i`3 @ 0b000`3 @ k`3
 
+    ; 054 Si <<= jk  (shift Si left by jk places in-place)
+    sshl {i: u3}, {jk: u6}            => 0b0101100`7 @ i`3 @ jk`6
+
+    ; 055 Si = Si >> (64-jk)  (shift Si right, complement of sshl)
+    sshr {i: u3}, {jk: u6}            => 0b0101101`7 @ i`3 @ jk`6
+
     ; 060 Si = Sj + Sk
     sadd {i: u3}, {j: u3}, {k: u3}   => 0b0110000`7 @ i`3 @ j`3 @ k`3
 
     ; 061 Si = Sj - Sk
     ssub {i: u3}, {j: u3}, {k: u3}   => 0b0110001`7 @ i`3 @ j`3 @ k`3
+
+    ; -----------------------------------------------------------------------
+    ; Scalar floating point
+    ; -----------------------------------------------------------------------
+
+    ; 062 Si = Sj + Sk (FP add; with j=0 and S0=0: normalizes Sk)
+    fadd {i: u3}, {j: u3}, {k: u3}   => 0b0110010`7 @ i`3 @ j`3 @ k`3
+
+    ; 063 Si = Sj - Sk (FP sub; with j=0 and S0=0: negates and normalizes Sk)
+    fsub {i: u3}, {j: u3}, {k: u3}   => 0b0110011`7 @ i`3 @ j`3 @ k`3
+
+    ; 064 Si = Sj * Sk (FP multiply, truncated)
+    fmul {i: u3}, {j: u3}, {k: u3}   => 0b0110100`7 @ i`3 @ j`3 @ k`3
+
+    ; 065 Si = Sj * Sk (half-precision rounded)
+    fmulh {i: u3}, {j: u3}, {k: u3}  => 0b0110101`7 @ i`3 @ j`3 @ k`3
+
+    ; 066 Si = Sj * Sk (full-precision rounded)
+    fmulr {i: u3}, {j: u3}, {k: u3}  => 0b0110110`7 @ i`3 @ j`3 @ k`3
+
+    ; 067 Si = 2 * Sj * Sk
+    fmul2 {i: u3}, {j: u3}, {k: u3}  => 0b0110111`7 @ i`3 @ j`3 @ k`3
+
+    ; 070 Si = reciprocal approximation of Sj (k field unused)
+    frecip {i: u3}, {j: u3}           => 0b0111000`7 @ i`3 @ j`3 @ 0`3
+
+    ; -----------------------------------------------------------------------
+    ; Vector floating point multiply
+    ; -----------------------------------------------------------------------
+
+    ; 160 Vi = Sj * Vk
+    vfmul  {i: u3}, {j: u3}, {k: u3}  => 0b1110000`7 @ i`3 @ j`3 @ k`3
+    ; 161 Vi = Vj * Vk
+    vfmulv {i: u3}, {j: u3}, {k: u3}  => 0b1110001`7 @ i`3 @ j`3 @ k`3
+    ; 162 Vi = Sj *H Vk (half-precision rounded)
+    vfmulh  {i: u3}, {j: u3}, {k: u3} => 0b1110010`7 @ i`3 @ j`3 @ k`3
+    ; 163 Vi = Vj *H Vk
+    vfmulhv {i: u3}, {j: u3}, {k: u3} => 0b1110011`7 @ i`3 @ j`3 @ k`3
+    ; 164 Vi = Sj *R Vk (full-precision rounded)
+    vfmulr  {i: u3}, {j: u3}, {k: u3} => 0b1110100`7 @ i`3 @ j`3 @ k`3
+    ; 165 Vi = Vj *R Vk
+    vfmulrv {i: u3}, {j: u3}, {k: u3} => 0b1110101`7 @ i`3 @ j`3 @ k`3
+    ; 166 Vi = 2 * Sj * Vk
+    vfmul2  {i: u3}, {j: u3}, {k: u3} => 0b1110110`7 @ i`3 @ j`3 @ k`3
+    ; 167 Vi = 2 * Vj * Vk
+    vfmul2v {i: u3}, {j: u3}, {k: u3} => 0b1110111`7 @ i`3 @ j`3 @ k`3
+
+    ; -----------------------------------------------------------------------
+    ; Vector floating point add/sub
+    ; -----------------------------------------------------------------------
+
+    ; 170 Vi = Sj + Vk
+    vfadd  {i: u3}, {j: u3}, {k: u3}  => 0b1111000`7 @ i`3 @ j`3 @ k`3
+    ; 171 Vi = Vj + Vk
+    vfaddv {i: u3}, {j: u3}, {k: u3}  => 0b1111001`7 @ i`3 @ j`3 @ k`3
+    ; 172 Vi = Sj - Vk
+    vfsub  {i: u3}, {j: u3}, {k: u3}  => 0b1111010`7 @ i`3 @ j`3 @ k`3
+    ; 173 Vi = Vj - Vk
+    vfsubv {i: u3}, {j: u3}, {k: u3}  => 0b1111011`7 @ i`3 @ j`3 @ k`3
+
+    ; 174 Vi = reciprocal approximation of Vj (k unused)
+    vfrecip {i: u3}, {j: u3}           => 0b1111100`7 @ i`3 @ j`3 @ 0`3
 
     ; -----------------------------------------------------------------------
     ; Branches — all long (32-bit), target is a label (byte address / 2 = parcel index)
@@ -207,8 +275,8 @@
     ; Vector memory load/store (base = A0; k=0 means stride 1)
     ; -----------------------------------------------------------------------
 
-    ; 176 Vi[n] = mem[A0 + n * Ak]  (k=0 → stride 1)
+    ; 176 Vi[n] = mem[A0 + n * Ak]  (k=0 -> stride 1)
     vload  {i: u3}, {k: u3}  => 0b1111110`7 @ i`3 @ 0`3 @ k`3
-    ; 177 mem[A0 + n * Ak] = Vj[n]  (k=0 → stride 1)
+    ; 177 mem[A0 + n * Ak] = Vj[n]  (k=0 -> stride 1)
     vstore {j: u3}, {k: u3}  => 0b1111111`7 @ 0`3 @ j`3 @ k`3
 }
