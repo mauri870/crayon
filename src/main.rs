@@ -1,22 +1,36 @@
 use std::process;
 
+use crayon::assembler::assemble;
 use crayon::cpu::{Cpu, Trap};
 use crayon::memory::Memory;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
-        eprintln!("usage: {} <program.bin>", args[0]);
+        eprintln!("usage: {} <program.asm|program.bin>", args[0]);
         eprintln!();
-        eprintln!("  Loads a flat binary image at word address 0 and executes it.");
-        eprintln!("  The binary must be big-endian: byte 0 maps to bits 63:56 of word 0.");
+        eprintln!("  .asm  assembled with the cray-1 ruleset, then run");
+        eprintln!("  .bin  loaded as a flat big-endian binary, then run");
         process::exit(1);
     }
 
-    let bytes = std::fs::read(&args[1]).unwrap_or_else(|e| {
-        eprintln!("error: {}: {}", args[1], e);
-        process::exit(1);
-    });
+    let path = &args[1];
+
+    let bytes = if path.ends_with(".asm") {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("error: {path}: {e}");
+            process::exit(1);
+        });
+        assemble(&src).unwrap_or_else(|e| {
+            eprint!("{e}");
+            process::exit(1);
+        })
+    } else {
+        std::fs::read(path).unwrap_or_else(|e| {
+            eprintln!("error: {path}: {e}");
+            process::exit(1);
+        })
+    };
 
     let mut mem = Memory::new();
     mem.load_program(&bytes);

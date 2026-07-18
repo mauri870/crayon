@@ -1,8 +1,10 @@
 # crayon
 
-A WIP CPU emulator for the Cray-1 supercomputer.
+A Cray-1 supercomputer emulator written in Rust.
 
-![Cray-1](cray1.png)
+<p align="center">
+  <img src="cray1.png" alt="Cray-1" width="400">
+</p>
 
 ## What it is
 
@@ -22,6 +24,16 @@ The cylindrical shape was an engineering constraint: no wire in the machine is
 longer than four feet. Shorter wires mean shorter signal propagation delays, which
 directly enables a faster clock. The padded bench at the base conceals the power
 supplies and a Freon cooling system — the machine consumed between 115 and 150 kW.
+
+## Usage
+
+```
+cargo run -- <program.asm>   # assemble with the built-in Cray-1 ruleset and run
+cargo run -- <program.bin>   # load a flat big-endian binary and run
+```
+
+Programs are written in [customasm](https://github.com/hlorenzi/customasm) syntax.
+The ruleset is defined in `cray1.asm` and embedded in the binary. See examples folder.
 
 ## Architecture
 
