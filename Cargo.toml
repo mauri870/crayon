@@ -5,3 +5,10 @@ edition = "2024"
 
 [dependencies]
 customasm = "0.14.1"
+
+[dev-dependencies]
+datatest-stable = "0.2"
+
+[[test]]
+name = "examples"
+harness = false
