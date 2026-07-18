@@ -188,6 +188,18 @@ impl Cpu {
             0o074 => self.regs.s[i] = self.regs.t[j << 3 | k],
             // Tjk = Si
             0o075 => self.regs.t[j << 3 | k] = self.regs.s[i],
+            // Si = VM
+            0o073 => self.regs.s[i] = self.regs.vm,
+            // Si = Vj[Ak]
+            0o076 => {
+                let elem = self.regs.a[k] as usize & 63;
+                self.regs.s[i] = self.regs.v[j][elem];
+            }
+            // Vi[Ak] = Sj
+            0o077 => {
+                let elem = self.regs.a[k] as usize & 63;
+                self.regs.v[i][elem] = self.regs.s[j];
+            }
 
             // --- Scalar integer arithmetic ---
             // Si = Sj + Sk
@@ -263,6 +275,94 @@ impl Cpu {
                 let base = self.regs.a[(d.opcode & 7) as usize];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.s[i]);
+            }
+
+            // --- Vector logical (0o140-0o147) ---
+            // VM bit n = bit (63-n) of the vm u64 (Cray-1 bit 0 = MSB convention).
+            0o140 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv & self.regs.v[k][n]; } }
+            0o141 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] & self.regs.v[k][n]; } }
+            0o142 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv | self.regs.v[k][n]; } }
+            0o143 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] | self.regs.v[k][n]; } }
+            0o144 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv ^ self.regs.v[k][n]; } }
+            0o145 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] ^ self.regs.v[k][n]; } }
+            0o146 => {
+                let (vl, sv, vm) = (self.regs.vl as usize, self.regs.s[j], self.regs.vm);
+                for n in 0..vl {
+                    self.regs.v[i][n] = if (vm >> (63 - n)) & 1 != 0 { sv } else { self.regs.v[k][n] };
+                }
+            }
+            0o147 => {
+                let (vl, vm) = (self.regs.vl as usize, self.regs.vm);
+                for n in 0..vl {
+                    let val = if (vm >> (63 - n)) & 1 != 0 { self.regs.v[j][n] } else { self.regs.v[k][n] };
+                    self.regs.v[i][n] = val;
+                }
+            }
+
+            // --- Vector shift (0o150-0o153) ---
+            // 0o152/0o153: double-shift Vj,Vj left/right Ak = rotate_left/right
+            0o150 => {
+                let (vl, count) = (self.regs.vl as usize, self.regs.a[k] & 0x7F);
+                for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] << count }; }
+            }
+            0o151 => {
+                let (vl, count) = (self.regs.vl as usize, self.regs.a[k] & 0x7F);
+                for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] >> count }; }
+            }
+            0o152 => {
+                let (vl, count) = (self.regs.vl as usize, (self.regs.a[k] & 0x3F) as u32);
+                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].rotate_left(count); }
+            }
+            0o153 => {
+                let (vl, count) = (self.regs.vl as usize, (self.regs.a[k] & 0x3F) as u32);
+                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].rotate_right(count); }
+            }
+
+            // --- Vector integer add (0o154-0o157) ---
+            0o154 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv.wrapping_add(self.regs.v[k][n]); } }
+            0o155 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_add(self.regs.v[k][n]); } }
+            0o156 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv.wrapping_sub(self.regs.v[k][n]); } }
+            0o157 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_sub(self.regs.v[k][n]); } }
+
+            // --- Vector mask test (0o175) ---
+            // k field encodes condition: 0=zero, 1=nonzero, 2=positive(>0), 3=negative(<0)
+            0o175 => {
+                let vl = self.regs.vl as usize;
+                let mut vm = 0u64;
+                for n in 0..vl {
+                    let elem = self.regs.v[j][n];
+                    let set = match k {
+                        0 => elem == 0,
+                        1 => elem != 0,
+                        2 => elem != 0 && (elem >> 63) == 0,
+                        3 => (elem >> 63) != 0,
+                        _ => false,
+                    };
+                    if set { vm |= 1u64 << (63 - n); }
+                }
+                self.regs.vm = vm;
+            }
+
+            // --- Vector memory load/store (0o176-0o177) ---
+            // 176ixk: Vi[n] = mem[A0 + n*Ak]; k=0 means stride=1
+            // 177xjk: mem[A0 + n*Ak] = Vj[n]; k=0 means stride=1
+            0o176 => {
+                let vl = self.regs.vl as usize;
+                let base = self.regs.a[0];
+                let stride = if k == 0 { 1 } else { self.regs.a[k] };
+                for n in 0..vl {
+                    let addr = base.wrapping_add(stride.wrapping_mul(n as u32)) & ADDR_MASK;
+                    self.regs.v[i][n] = self.mem.read(addr);
+                }
+            }
+            0o177 => {
+                let vl = self.regs.vl as usize;
+                let base = self.regs.a[0];
+                let stride = if k == 0 { 1 } else { self.regs.a[k] };
+                for n in 0..vl {
+                    let addr = base.wrapping_add(stride.wrapping_mul(n as u32)) & ADDR_MASK;
+                    self.mem.write(addr, self.regs.v[j][n]);
+                }
             }
 
             _ => return Err(Trap::Unimplemented(d.opcode)),
@@ -590,6 +690,145 @@ mod tests {
         cpu.step().unwrap(); // JAZ not taken: P stays at 3
         assert_eq!(cpu.regs.p, 3);
         assert_eq!(cpu.step(), Err(Trap::NormalExit));
+    }
+
+    #[test]
+    fn vector_add_vv() {
+        // V0 = V1 + V2 element-wise with VL=4
+        let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
+        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o155, 0, 1, 2);  // V0 = V1 + V2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        for n in 0..4usize { cpu.regs.v[1][n] = (n as u64 + 1) * 10; } // 10,20,30,40
+        for n in 0..4usize { cpu.regs.v[2][n] = n as u64 + 1; }         // 1,2,3,4
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(&cpu.regs.v[0][..4], &[11, 22, 33, 44]);
+    }
+
+    #[test]
+    fn vector_add_sv() {
+        // V0 = S1 + V2 (scalar broadcast) with VL=3
+        let [a0, a1] = parcel_jk(0o22, 1, 3);   // A1 = 3
+        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o154, 0, 1, 2);  // V0 = S1 + V2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        cpu.regs.s[1] = 100;
+        for n in 0..3usize { cpu.regs.v[2][n] = n as u64; } // 0,1,2
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(&cpu.regs.v[0][..3], &[100, 101, 102]);
+    }
+
+    #[test]
+    fn vector_and_sv() {
+        // V0 = S1 & V2 with VL=2
+        let [a0, a1] = parcel_jk(0o22, 1, 2);   // A1 = 2
+        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o140, 0, 1, 2);  // V0 = S1 & V2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        cpu.regs.s[1] = 0x0F;
+        cpu.regs.v[2][0] = 0xFF;
+        cpu.regs.v[2][1] = 0xAA;
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.v[0][0], 0x0F);
+        assert_eq!(cpu.regs.v[0][1], 0x0A);
+    }
+
+    #[test]
+    fn vector_shift_left() {
+        // V0 = V1 << A2 with VL=2, A2=3
+        let [a0, a1] = parcel_jk(0o22, 1, 2);   // A1 = 2 (VL)
+        let [b0, b1] = parcel_jk(0o22, 2, 3);   // A2 = 3 (shift count)
+        let [c0, c1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [d0, d1] = parcel(0o150, 0, 1, 2);  // V0 = V1 << A2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0,a1,b0,b1,c0,c1,d0,d1,x0,x1, 0,0,0,0,0,0]);
+        cpu.regs.v[1][0] = 1;
+        cpu.regs.v[1][1] = 2;
+        for _ in 0..4 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.v[0][0], 8);
+        assert_eq!(cpu.regs.v[0][1], 16);
+    }
+
+    #[test]
+    fn vector_mask_test_zero() {
+        // vmtest_z on V1=[0,5,0,3] with VL=4 → VM bits set for elements 0 and 2
+        let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
+        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o175, 0, 1, 0);  // VM = (V1[n]==0)
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        cpu.regs.v[1][0] = 0;
+        cpu.regs.v[1][1] = 5;
+        cpu.regs.v[1][2] = 0;
+        cpu.regs.v[1][3] = 3;
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.vm, (1u64 << 63) | (1u64 << 61));
+    }
+
+    #[test]
+    fn vector_merge_vv() {
+        // V0 = VM ? V1 : V2 with VL=4; VM selects elements 0 and 2 from V1
+        let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
+        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o147, 0, 1, 2);  // V0 = VM ? V1 : V2
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        cpu.regs.vm = (1u64 << 63) | (1u64 << 61); // elements 0 and 2 from V1
+        for n in 0..4usize { cpu.regs.v[1][n] = 100 + n as u64; } // 100,101,102,103
+        for n in 0..4usize { cpu.regs.v[2][n] = 200 + n as u64; } // 200,201,202,203
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.v[0][0], 100); // VM=1 → V1
+        assert_eq!(cpu.regs.v[0][1], 201); // VM=0 → V2
+        assert_eq!(cpu.regs.v[0][2], 102); // VM=1 → V1
+        assert_eq!(cpu.regs.v[0][3], 203); // VM=0 → V2
+    }
+
+    #[test]
+    fn vector_load_store() {
+        // vstore V1[0..3] to words 50,51,52; vload into V2; check match
+        let [a0, a1] = parcel_jk(0o22, 0, 50);  // A0 = 50 (base address)
+        let [b0, b1] = parcel_jk(0o22, 1, 3);   // A1 = 3
+        let [c0, c1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [d0, d1] = parcel(0o177, 0, 1, 0);  // vstore V1 stride=1
+        let [e0, e1] = parcel(0o176, 2, 0, 0);  // vload  V2 stride=1
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0,a1,b0,b1,c0,c1,d0,d1,e0,e1,x0,x1, 0,0,0,0]);
+        cpu.regs.v[1][0] = 0xAA;
+        cpu.regs.v[1][1] = 0xBB;
+        cpu.regs.v[1][2] = 0xCC;
+        for _ in 0..5 { cpu.step().unwrap(); }
+        assert_eq!(cpu.regs.v[2][0], 0xAA);
+        assert_eq!(cpu.regs.v[2][1], 0xBB);
+        assert_eq!(cpu.regs.v[2][2], 0xCC);
+    }
+
+    #[test]
+    fn vector_element_insert_extract() {
+        // Insert S1=42 into V2[A3=1], then extract V2[A3=1] back to S0
+        let [a0, a1] = parcel_jk(0o22, 3, 1);   // A3 = 1 (element index)
+        let [b0, b1] = parcel(0o077, 2, 1, 3);  // V2[A3] = S1
+        let [c0, c1] = parcel(0o076, 0, 2, 3);  // S0 = V2[A3]
+        let [x0, x1] = parcel(0o04, 0, 0, 0);
+        let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
+        cpu.regs.s[1] = 42;
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        cpu.step().unwrap();
+        assert_eq!(cpu.regs.s[0], 42);
+        assert_eq!(cpu.regs.v[2][1], 42);
     }
 
     #[test]
