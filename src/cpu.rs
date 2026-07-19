@@ -98,6 +98,8 @@ pub struct Cpu {
     ibufs: InstructionBuffers,
     // Per address register: earliest cycle when the result is available.
     ar_ready_at: [u64; 8],
+    // Per scalar register: earliest cycle when the result is available.
+    sr_ready_at: [u64; 8],
 }
 
 impl Cpu {
@@ -108,6 +110,7 @@ impl Cpu {
             cycle: 0,
             ibufs: InstructionBuffers::new(),
             ar_ready_at: [0; 8],
+            sr_ready_at: [0; 8],
         }
     }
 
@@ -143,12 +146,23 @@ impl Cpu {
             0o020                        => [self.ar_ready_at[k], 0],
             0o025                        => [self.ar_ready_at[i], 0],
             0o030 | 0o031 | 0o032        => [self.ar_ready_at[j], self.ar_ready_at[k]],
-            0o056 | 0o057                => [self.ar_ready_at[k], 0],
+            0o044..=0o047                => [self.sr_ready_at[j], self.sr_ready_at[k]],
+            0o050                        => [self.sr_ready_at[i].max(self.sr_ready_at[j]), self.sr_ready_at[k]],
+            0o051                        => [self.sr_ready_at[i], self.sr_ready_at[j]],
+            0o052 | 0o053                => [self.sr_ready_at[i], 0],
+            0o054 | 0o055                => [self.sr_ready_at[i], 0],
+            0o056 | 0o057                => [self.sr_ready_at[i].max(self.sr_ready_at[j]), self.ar_ready_at[k]],
+            0o060 | 0o061                => [self.sr_ready_at[j], self.sr_ready_at[k]],
+            0o062 | 0o063                => [self.sr_ready_at[j], self.sr_ready_at[k]],
+            0o064..=0o067                => [self.sr_ready_at[j], self.sr_ready_at[k]],
+            0o070                        => [self.sr_ready_at[j], 0],
             0o071 if j <= 2              => [self.ar_ready_at[k], 0],
+            0o075                        => [self.sr_ready_at[i], 0],
+            0o077                        => [self.sr_ready_at[j], self.ar_ready_at[k]],
             0o100..=0o107                => [self.ar_ready_at[h], 0],
             0o110..=0o117                => [self.ar_ready_at[h], self.ar_ready_at[i]],
             0o120..=0o127                => [self.ar_ready_at[h], 0],
-            0o130..=0o137                => [self.ar_ready_at[h], 0],
+            0o130..=0o137                => [self.ar_ready_at[h], self.sr_ready_at[i]],
             0o150..=0o153                => [self.ar_ready_at[k], 0],
             0o176                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
             0o177                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
@@ -211,25 +225,26 @@ impl Cpu {
 
             // --- Scalar transmit ---
             // Si = 22-bit constant (zero-extended)
-            0o040 => self.regs.s[i] = d.addr22 as u64,
+            0o040 => { self.regs.s[i] = d.addr22 as u64; self.sr_ready_at[i] = 0; }
             // Si = 0
-            0o043 => self.regs.s[i] = 0,
+            0o043 => { self.regs.s[i] = 0; self.sr_ready_at[i] = 0; }
             // Si = Ak (zero-extended from 24-bit)
-            0o071 if d.j == 0 => self.regs.s[i] = self.regs.a[k] as u64,
+            0o071 if d.j == 0 => { self.regs.s[i] = self.regs.a[k] as u64; self.sr_ready_at[i] = 0; }
             // Si = Ak (sign-extended from 24-bit)
-            0o071 if d.j == 1 => self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64,
+            0o071 if d.j == 1 => { self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64; self.sr_ready_at[i] = 0; }
             // Si = Ak as unnormalized floating point (j=2)
-            0o071 if d.j == 2 => self.regs.s[i] = fp::from_f64(self.regs.a[k] as f64),
+            0o071 if d.j == 2 => { self.regs.s[i] = fp::from_f64(self.regs.a[k] as f64); self.sr_ready_at[i] = 0; }
             // Si = Tjk
-            0o074 => self.regs.s[i] = self.regs.t[j << 3 | k],
+            0o074 => { self.regs.s[i] = self.regs.t[j << 3 | k]; self.sr_ready_at[i] = 0; }
             // Tjk = Si
             0o075 => self.regs.t[j << 3 | k] = self.regs.s[i],
             // Si = VM
-            0o073 => self.regs.s[i] = self.regs.vm,
+            0o073 => { self.regs.s[i] = self.regs.vm; self.sr_ready_at[i] = 0; }
             // Si = Vj[Ak]
             0o076 => {
                 let elem = self.regs.a[k] as usize & 63;
                 self.regs.s[i] = self.regs.v[j][elem];
+                self.sr_ready_at[i] = 0;
             }
             // Vi[Ak] = Sj
             0o077 => {
@@ -237,67 +252,70 @@ impl Cpu {
                 self.regs.v[i][elem] = self.regs.s[j];
             }
 
-            // --- Scalar floating point (0o062-0o070) ---
+            // --- Scalar floating point (0o062-0o070); latencies: add=6, mul=7, recip=14 CP ---
             // Si = Sj + Sk (FP add; j=0 with S0=0 normalizes Sk)
-            0o062 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) + fp::to_f64(self.regs.s[k])),
+            0o062 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) + fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; }
             // Si = Sj - Sk (FP sub; j=0 with S0=0 negates and normalizes Sk)
-            0o063 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) - fp::to_f64(self.regs.s[k])),
-            // Si = Sj * Sk (FP multiply, truncated)
-            0o064 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
-            // Si = Sj * Sk (half-precision rounded)
-            0o065 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
-            // Si = Sj * Sk (full-precision rounded)
-            0o066 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
-            // Si = 2 * Sj * Sk
-            0o067 => self.regs.s[i] = fp::from_f64(2.0 * fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])),
-            // Si = reciprocal approximation of Sj
-            0o070 => self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]).recip()),
+            0o063 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) - fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; }
+            // Si = Sj * Sk (FP multiply, truncated); 7 CP
+            0o064 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            // Si = Sj * Sk (half-precision rounded); 7 CP
+            0o065 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            // Si = Sj * Sk (full-precision rounded); 7 CP
+            0o066 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            // Si = 2 * Sj * Sk; 7 CP
+            0o067 => { self.regs.s[i] = fp::from_f64(2.0 * fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            // Si = reciprocal approximation of Sj; 14 CP
+            0o070 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]).recip()); self.sr_ready_at[i] = issued_at + 14; }
 
-            // --- Scalar integer arithmetic ---
+            // --- Scalar integer arithmetic; 3 CP ---
             // Si = Sj + Sk
-            0o060 => self.regs.s[i] = self.regs.s[j].wrapping_add(self.regs.s[k]),
+            0o060 => { self.regs.s[i] = self.regs.s[j].wrapping_add(self.regs.s[k]); self.sr_ready_at[i] = issued_at + 3; }
             // Si = Sj - Sk
-            0o061 => self.regs.s[i] = self.regs.s[j].wrapping_sub(self.regs.s[k]),
+            0o061 => { self.regs.s[i] = self.regs.s[j].wrapping_sub(self.regs.s[k]); self.sr_ready_at[i] = issued_at + 3; }
 
-            // --- Scalar logical ---
+            // --- Scalar logical; 1 CP ---
             // Si = Sj & Sk
-            0o044 => self.regs.s[i] = self.regs.s[j] & self.regs.s[k],
+            0o044 => { self.regs.s[i] = self.regs.s[j] & self.regs.s[k]; self.sr_ready_at[i] = issued_at + 1; }
             // Si = Sj & ~Sk
-            0o045 => self.regs.s[i] = self.regs.s[j] & !self.regs.s[k],
+            0o045 => { self.regs.s[i] = self.regs.s[j] & !self.regs.s[k]; self.sr_ready_at[i] = issued_at + 1; }
             // Si = Sj ^ Sk
-            0o046 => self.regs.s[i] = self.regs.s[j] ^ self.regs.s[k],
+            0o046 => { self.regs.s[i] = self.regs.s[j] ^ self.regs.s[k]; self.sr_ready_at[i] = issued_at + 1; }
             // Si = ~(Sj ^ Sk)  (logical equivalence / XNOR)
-            0o047 => self.regs.s[i] = !(self.regs.s[j] ^ self.regs.s[k]),
+            0o047 => { self.regs.s[i] = !(self.regs.s[j] ^ self.regs.s[k]); self.sr_ready_at[i] = issued_at + 1; }
             // Si = (Si & ~Sk) | (Sj & Sk)  (merge: select Sj where Sk=1, Si where Sk=0)
-            0o050 => self.regs.s[i] = (self.regs.s[i] & !self.regs.s[k]) | (self.regs.s[j] & self.regs.s[k]),
+            0o050 => { self.regs.s[i] = (self.regs.s[i] & !self.regs.s[k]) | (self.regs.s[j] & self.regs.s[k]); self.sr_ready_at[i] = issued_at + 1; }
             // Si = (Si & ~mask) | (Sj & mask) where mask = sign bit of Sj broadcast
             0o051 => {
                 let mask = ((self.regs.s[j] as i64) >> 63) as u64;
                 self.regs.s[i] = (self.regs.s[i] & !mask) | (self.regs.s[j] & mask);
+                self.sr_ready_at[i] = issued_at + 1;
             }
 
-            // --- Scalar shifts ---
+            // --- Scalar shifts; immediate=2 CP, register=3 CP ---
             // S0 = Si << jk
-            0o052 => self.regs.s[0] = self.regs.s[i] << d.jk,
+            0o052 => { self.regs.s[0] = self.regs.s[i] << d.jk; self.sr_ready_at[0] = issued_at + 2; }
             // S0 = Si >> (64 - jk)
-            0o053 => self.regs.s[0] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) },
+            0o053 => { self.regs.s[0] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) }; self.sr_ready_at[0] = issued_at + 2; }
             // Si = Si << jk
-            0o054 => self.regs.s[i] <<= d.jk,
+            0o054 => { self.regs.s[i] <<= d.jk; self.sr_ready_at[i] = issued_at + 2; }
             // Si = Si >> (64 - jk)
-            0o055 => self.regs.s[i] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) },
-            // Si = high 64 bits of (Si:Sj) << Ak  (double-length left shift)
+            0o055 => { self.regs.s[i] = if d.jk == 0 { 0 } else { self.regs.s[i] >> (64 - d.jk) }; self.sr_ready_at[i] = issued_at + 2; }
+            // Si = high 64 bits of (Si:Sj) << Ak  (double-length left shift); 3 CP
             0o056 => {
                 let count = (self.regs.a[k] & 0x7F) as u32;
                 self.regs.s[i] = if count == 0 { self.regs.s[i] }
                     else if count >= 64 { self.regs.s[j] << (count - 64) }
                     else { (self.regs.s[i] << count) | (self.regs.s[j] >> (64 - count)) };
+                self.sr_ready_at[i] = issued_at + 3;
             }
-            // Si = low 64 bits of (Sj:Si) >> Ak  (double-length right shift)
+            // Si = low 64 bits of (Sj:Si) >> Ak  (double-length right shift); 3 CP
             0o057 => {
                 let count = (self.regs.a[k] & 0x7F) as u32;
                 self.regs.s[i] = if count == 0 { self.regs.s[i] }
                     else if count >= 64 { self.regs.s[j] >> (count - 64) }
                     else { (self.regs.s[j] << (64 - count)) | (self.regs.s[i] >> count) };
+                self.sr_ready_at[i] = issued_at + 3;
             }
 
             // --- Memory load/store ---
@@ -323,6 +341,7 @@ impl Cpu {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.s[i] = self.mem.read(addr);
+                self.sr_ready_at[i] = issued_at + 7;
             }
             0o130..=0o137 => {
                 let base = self.regs.a[h];
