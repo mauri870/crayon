@@ -21,7 +21,7 @@ their different applications, these workloads all share the same structure: the 
 operation applied independently across large datasets. That is exactly what the
 CRAY-1 was designed to accelerate.
 
-For example, [kepler.asm](examples/kepler.asm) computes the orbital periods of all eight planets simultaneously using vector instructions.
+For example, [kepler.asm](examples/kepler.asm) computes the orbital periods of all eight planets simultaneously using vector instructions. The [nbody64.asm](examples/nbody64.asm) example computes the gravitational interactions between 64 bodies in parallel, matching the CRAY-1's 64-element vector length.
 
 The defining feature of the CRAY-1 was its eight vector registers, each containing 64
 64-bit elements. A single instruction could initiate a floating-point multiply across
