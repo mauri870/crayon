@@ -96,6 +96,8 @@ pub struct Cpu {
     pub mem: Memory,
     pub cycle: u64,
     ibufs: InstructionBuffers,
+    // Per address register: earliest cycle when the result is available.
+    ar_ready_at: [u64; 8],
 }
 
 impl Cpu {
@@ -105,6 +107,7 @@ impl Cpu {
             mem,
             cycle: 0,
             ibufs: InstructionBuffers::new(),
+            ar_ready_at: [0; 8],
         }
     }
 
@@ -134,7 +137,24 @@ impl Cpu {
         let j = d.j as usize;
         let k = d.k as usize;
 
-        self.issue(&[]);
+        let h = (d.opcode & 7) as usize; // low 3 bits: base A register for memory opcodes
+        let srcs: [u64; 2] = match d.opcode {
+            0o010..=0o013                => [self.ar_ready_at[0], 0],
+            0o020                        => [self.ar_ready_at[k], 0],
+            0o025                        => [self.ar_ready_at[i], 0],
+            0o030 | 0o031 | 0o032        => [self.ar_ready_at[j], self.ar_ready_at[k]],
+            0o056 | 0o057                => [self.ar_ready_at[k], 0],
+            0o071 if j <= 2              => [self.ar_ready_at[k], 0],
+            0o100..=0o107                => [self.ar_ready_at[h], 0],
+            0o110..=0o117                => [self.ar_ready_at[h], self.ar_ready_at[i]],
+            0o120..=0o127                => [self.ar_ready_at[h], 0],
+            0o130..=0o137                => [self.ar_ready_at[h], 0],
+            0o150..=0o153                => [self.ar_ready_at[k], 0],
+            0o176                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
+            0o177                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
+            _                            => [0, 0],
+        };
+        let issued_at = self.issue(&srcs);
 
         match d.opcode {
             // --- Control ---
@@ -171,23 +191,23 @@ impl Cpu {
 
             // --- Address register transmit ---
             // Ai = sign-extended 22-bit constant (addr22)
-            0o021 => self.regs.write_a(i, d.addr22),
+            0o021 => { self.regs.write_a(i, d.addr22); self.ar_ready_at[i] = 0; }
             // Ai = jk (6-bit constant from same parcel)
-            0o022 => self.regs.write_a(i, d.jk as u32),
+            0o022 => { self.regs.write_a(i, d.jk as u32); self.ar_ready_at[i] = 0; }
             // Ai = Sj (lower 24 bits)
-            0o023 => self.regs.write_a(i, self.regs.s[j] as u32),
+            0o023 => { self.regs.write_a(i, self.regs.s[j] as u32); self.ar_ready_at[i] = 0; }
             // Ai = Bjk
-            0o024 => self.regs.write_a(i, self.regs.b[j << 3 | k]),
+            0o024 => { self.regs.write_a(i, self.regs.b[j << 3 | k]); self.ar_ready_at[i] = 0; }
             // Bjk = Ai
             0o025 => self.regs.write_b(j << 3 | k, self.regs.a[i]),
 
             // --- Address integer arithmetic ---
-            // Ai = Aj + Ak  (24-bit, wraps)
-            0o030 => self.regs.write_a(i, self.regs.a[j].wrapping_add(self.regs.a[k])),
-            // Ai = Aj - Ak
-            0o031 => self.regs.write_a(i, self.regs.a[j].wrapping_sub(self.regs.a[k])),
-            // Ai = Aj * Ak  (lower 24 bits of product)
-            0o032 => self.regs.write_a(i, self.regs.a[j].wrapping_mul(self.regs.a[k])),
+            // Ai = Aj + Ak  (24-bit, wraps); 2 CP latency
+            0o030 => { self.regs.write_a(i, self.regs.a[j].wrapping_add(self.regs.a[k])); self.ar_ready_at[i] = issued_at + 2; }
+            // Ai = Aj - Ak; 2 CP latency
+            0o031 => { self.regs.write_a(i, self.regs.a[j].wrapping_sub(self.regs.a[k])); self.ar_ready_at[i] = issued_at + 2; }
+            // Ai = Aj * Ak  (lower 24 bits of product); 6 CP latency
+            0o032 => { self.regs.write_a(i, self.regs.a[j].wrapping_mul(self.regs.a[k])); self.ar_ready_at[i] = issued_at + 6; }
 
             // --- Scalar transmit ---
             // Si = 22-bit constant (zero-extended)
@@ -289,22 +309,23 @@ impl Cpu {
             // 0o120-0o127: Si = mem[Ah + addr22]
             // 0o130-0o137: mem[Ah + addr22] = Si
             0o100..=0o107 => {
-                let base = self.regs.a[(d.opcode & 7) as usize];
+                let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.write_a(i, self.mem.read(addr) as u32);
+                self.ar_ready_at[i] = issued_at + 7;
             }
             0o110..=0o117 => {
-                let base = self.regs.a[(d.opcode & 7) as usize];
+                let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.a[i] as u64);
             }
             0o120..=0o127 => {
-                let base = self.regs.a[(d.opcode & 7) as usize];
+                let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.s[i] = self.mem.read(addr);
             }
             0o130..=0o137 => {
-                let base = self.regs.a[(d.opcode & 7) as usize];
+                let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.s[i]);
             }
@@ -351,7 +372,8 @@ impl Cpu {
             }
 
             // --- Vector shift (0o150-0o153) ---
-            // 0o152/0o153: double-shift Vj,Vj left/right Ak = rotate_left/right
+            // 0o150/0o151: per-element bit shift left/right by Ak
+            // 0o152/0o153: double-shift [Vj|Vj] left/right by Ak = circular element rotation
             0o150 => {
                 let (vl, count) = (self.regs.vl as usize, self.regs.a[k] & 0x7F);
                 for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] << count }; }
@@ -361,12 +383,14 @@ impl Cpu {
                 for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] >> count }; }
             }
             0o152 => {
-                let (vl, count) = (self.regs.vl as usize, (self.regs.a[k] & 0x3F) as u32);
-                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].rotate_left(count); }
+                let vl = self.regs.vl as usize;
+                let count = if vl == 0 { 0 } else { (self.regs.a[k] as usize) % vl };
+                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][(n + count) % vl]; }
             }
             0o153 => {
-                let (vl, count) = (self.regs.vl as usize, (self.regs.a[k] & 0x3F) as u32);
-                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].rotate_right(count); }
+                let vl = self.regs.vl as usize;
+                let count = if vl == 0 { 0 } else { (self.regs.a[k] as usize) % vl };
+                for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][(n + vl - count) % vl]; }
             }
 
             // --- Vector integer add (0o154-0o157) ---
