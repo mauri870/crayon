@@ -9,7 +9,7 @@
 ;   V1 = V0 * V0   (a²)
 ;   V2 = V1 * V0   (a³ = T²)
 ;
-; Expect: S0=0x3ffced96c0558990 S1=0x3fffc1c4b722bb5e S2=0x4001800000000000 S3=0x4002e26443b0dbd5 S4=0x40088cd1bb180d2e S5=0x400ad8dcdbd5f522 S6=0x400ddccf4c045104 S7=0x400fd46a770698b7
+; Expect: S0=0x3ffced96c0558990 S1=0x3fffc1c4b722bb5e S2=0x4001800000000000 S3=0x4002e26443b0dbd5 S4=0x40088cd1bb180d2e S5=0x400ad8dcdbd5f522 S6=0x400ddccf4c045104 S7=0x400fd46a770698b7 cycles=23
 ;         Mercury               Venus                 Earth                 Mars                  Jupiter               Saturn                Uranus                Neptune
 ; T²      0.058 yr²             0.378 yr²             1.000 yr²             3.537 yr²             140.8 yr²             867.5 yr²             7066 yr²              27189 yr²
 

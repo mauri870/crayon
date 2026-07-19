@@ -56,6 +56,7 @@ fn check_register(cpu: &Cpu, name: &str, expected: u64, file: &str) {
         }
         "VL" => cpu.regs.vl as u64,
         "P" => cpu.regs.p as u64,
+        "CYCLES" => cpu.cycle,
         _ => panic!("{file}: unknown register '{name}'"),
     };
     assert_eq!(
