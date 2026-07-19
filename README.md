@@ -1,6 +1,6 @@
 # crayon
 
-A Cray-1 supercomputer emulator written in Rust.
+A CPU emulator for the CRAY-1 supercomputer.
 
 <p align="center">
   <img src="cray1.png" alt="Cray-1" width="400">
@@ -8,76 +8,59 @@ A Cray-1 supercomputer emulator written in Rust.
 
 ## What it is
 
-The Cray-1 was designed by Seymour Cray and first installed at Los Alamos National
-Laboratory in 1976. It held the title of world's fastest computer until 1982, with
-around 80 systems sold to government labs and universities at up to $8 million each.
+The CRAY-1 was designed by Seymour Cray and first installed at Los Alamos National
+Laboratory in 1976. It remained the world's fastest computer until 1982. Around 80
+systems were sold to government laboratories, research institutions, and universities
+for up to $8 million each.
 
-It had a 12.5 ns clock period and twelve pipelined functional units. Its defining
-feature was eight vector registers, each holding 64 64-bit elements. A single
-instruction could operate on all of them at once. This is the same idea behind
-modern SIMD instruction sets like AVX-512, predating them by decades. The machine
-also supported *chaining*: the output of one vector functional unit could feed
-directly into another before the first operation had finished, overlapping latency
-across dependent instructions.
+The systems were used to solve some of the hardest computational problems of the era:
+simulating nuclear weapons at Los Alamos and Lawrence Livermore, forecasting global
+weather by modelling movements of air masses, designing aircraft by simulating air
+flows over wing and airframe surfaces, and geophysical research and seismic analysis. Despite
+their different applications, these workloads all share the same structure: the same
+operation applied independently across large datasets. That is exactly what the
+CRAY-1 was designed to accelerate.
 
-The cylindrical shape was an engineering constraint: no wire in the machine is
-longer than four feet. Shorter wires mean shorter signal propagation delays, which
-directly enables a faster clock. The padded bench at the base conceals the power
-supplies and a Freon cooling system — the machine consumed between 115 and 150 kW.
+For example, [kepler.asm](examples/kepler.asm) computes the orbital periods of four planets simultaneously using vector instructions.
+
+The defining feature of the CRAY-1 was its eight vector registers, each containing 64
+64-bit elements. A single instruction could initiate a floating-point multiply across
+all 64 element pairs, with the pipeline producing one result every clock cycle (12.5 ns)
+once full. On vector workloads, the machine sustained up to 80 million floating-point operations
+per second. Programs that take advantage of the vector features can achieve substantially
+higher rates than scalar implementations on the same hardware.
+
+The machine also supported *chaining*: the output of one vector functional unit could
+feed directly into another before the first operation had completed, allowing dependent
+instructions to overlap in execution. The same principle is used by modern SIMD
+instruction sets such as AVX-512, more than four decades later.
+
+The CRAY-1's iconic cylindrical shape was driven by engineering constraints rather than
+aesthetics. No wire inside the machine was longer than four feet, reducing signal
+propagation delays and enabling a higher clock frequency. The padded bench surrounding
+the base concealed the power supplies and the Freon cooling system required to dissipate
+the machine's 115 to 150 kW power consumption.
+
+## Architecture
+
+- **Clock**: 12.5 ns (80 MHz)
+- **Memory**: up to 1M 64-bit words, 16 interleaved banks, word-addressed
+- **Registers**: 8x24-bit address (A), 8x64-bit scalar (S), 8x(64x64-bit) vector (V), plus 64 intermediate address (B) and scalar (T) registers for staging
+- **Vector length/mask**: 7-bit VL register (0–64), 64-bit VM mask register
+- **Instruction size**: 16-bit (one parcel) or 32-bit (two parcels); 128 opcodes
+- **Floating point**: 64-bit signed-magnitude, 15-bit biased exponent, 48-bit coefficient
 
 ## Usage
 
 ```
 cargo run -- <program.asm>   # assemble with the built-in Cray-1 ruleset and run
 cargo run -- <program.bin>   # load a flat big-endian binary and run
-```
-
-Programs are written in [customasm](https://github.com/hlorenzi/customasm) syntax.
-The ruleset is defined in `cray1.asm` and embedded in the binary. See examples folder.
-
-## Architecture
-
-**Registers**
-
-| Name | Width | Count | Purpose |
-|---|---|---|---|
-| A0–A7 | 24-bit | 8 | Address registers — pointers, loop counters |
-| S0–S7 | 64-bit | 8 | Scalar registers |
-| V0–V7 | 64×64-bit | 8 | Vector registers |
-| B00–B77 | 24-bit | 64 | Intermediate address (staging for A) |
-| T00–T77 | 64-bit | 64 | Intermediate scalar (staging for S) |
-| VL | 7-bit | 1 | Vector length (0–64) |
-| VM | 64-bit | 1 | Vector mask |
-| P | 24-bit | 1 | Parcel counter |
-
-**Memory**
-
-Up to 1,048,576 64-bit words in 16 interleaved banks. Word-addressed.
-
-**Functional units**
-
-| Unit | Latency |
-|---|---|
-| Address integer add | 2 clocks |
-| Address multiply | 6 clocks |
-| Scalar integer add | 3 clocks |
-| Scalar logical | 1 clock |
-| Scalar shift | 2–3 clocks |
-| Scalar leading zero/pop count | 3–4 clocks |
-| Vector integer add | 3 clocks |
-| Vector logical | 2 clocks |
-| Vector shift | 4 clocks |
-| Floating point add | 6 clocks |
-| Floating point multiply | 7 clocks |
-| Floating point reciprocal | 14 clocks |
-
-## Building
-
-```
-cargo build
 cargo test
 ```
 
+Programs are written in [customasm](https://github.com/hlorenzi/customasm) syntax.
+The ruleset is defined in `cray1.asm` and embedded in the binary. See [examples](examples) folder.
+
 ## References
 
-Cray Research, Inc. — [*The CRAY-1 Computer System*](https://s3data.computerhistory.org/brochures/cray.cray1.1977.102638650.pdf) (1977), publication number 2240008 8.
+Cray Research, Inc. [*The CRAY-1 Computer System*](https://s3data.computerhistory.org/brochures/cray.cray1.1977.102638650.pdf) (1977), publication number 2240008 8.
