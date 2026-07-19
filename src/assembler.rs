@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn assemble_load_constants() {
-        let cpu = run("ai 1, 5\n ai 2, 3\n exit");
+        let cpu = run("ai a1, 5\n ai a2, 3\n exit");
         assert_eq!(cpu.regs.a[1], 5);
         assert_eq!(cpu.regs.a[2], 3);
     }

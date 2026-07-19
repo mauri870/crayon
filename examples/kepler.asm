@@ -14,34 +14,34 @@
 ; T²      0.058 yr²             0.378 yr²             1.000 yr²             3.537 yr²             140.8 yr²             867.5 yr²             7066 yr²              27189 yr²
 
     ; VL = 8 (one element per planet)
-    ai 1, 8
-    setvl 1
+    ai a1, 8
+    setvl a1
 
     ; Load semi-major axes from the data table into V0
-    ai_l 0, semi_major_axes / 8
-    vload 0, 0
+    ai_l a0, semi_major_axes / 8
+    vload v0, a0
 
     ; Kepler core: two vector multiplies
-    vfmulv 1, 0, 0   ; V1[i] = a[i]²
-    vfmulv 2, 1, 0   ; V2[i] = a[i]³  =  T²[i]
+    vfmulv v1, v0, v0   ; V1[i] = a[i]²
+    vfmulv v2, v1, v0   ; V2[i] = a[i]³  =  T²[i]
 
     ; Extract T² results into S0-S7
-    ai 0, 0
-    vget 0, 2, 0     ; S0 = T²[Mercury]
-    ai 0, 1
-    vget 1, 2, 0     ; S1 = T²[Venus]
-    ai 0, 2
-    vget 2, 2, 0     ; S2 = T²[Earth]
-    ai 0, 3
-    vget 3, 2, 0     ; S3 = T²[Mars]
-    ai 0, 4
-    vget 4, 2, 0     ; S4 = T²[Jupiter]
-    ai 0, 5
-    vget 5, 2, 0     ; S5 = T²[Saturn]
-    ai 0, 6
-    vget 6, 2, 0     ; S6 = T²[Uranus]
-    ai 0, 7
-    vget 7, 2, 0     ; S7 = T²[Neptune]
+    ai a0, 0
+    vget s0, v2, a0     ; S0 = T²[Mercury]
+    ai a0, 1
+    vget s1, v2, a0     ; S1 = T²[Venus]
+    ai a0, 2
+    vget s2, v2, a0     ; S2 = T²[Earth]
+    ai a0, 3
+    vget s3, v2, a0     ; S3 = T²[Mars]
+    ai a0, 4
+    vget s4, v2, a0     ; S4 = T²[Jupiter]
+    ai a0, 5
+    vget s5, v2, a0     ; S5 = T²[Saturn]
+    ai a0, 6
+    vget s6, v2, a0     ; S6 = T²[Uranus]
+    ai a0, 7
+    vget s7, v2, a0     ; S7 = T²[Neptune]
 
     exit
 

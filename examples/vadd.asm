@@ -7,32 +7,32 @@
 ;
 ; Expect: S1=11 S2=21 S3=31 S4=41
 
-    ai 0, 50          ; A0 = 50 (base address)
-    ai 1, 4           ; A1 = 4
-    setvl 1           ; VL = 4
+    ai a0, 50           ; A0 = 50 (base address)
+    ai a1, 4            ; A1 = 4
+    setvl a1            ; VL = 4
 
     ; store input array to words 50-53
-    si 5, 10
-    stores 5, 0, 0    ; mem[A0+0] = 10
-    si 5, 20
-    stores 5, 0, 1    ; mem[A0+1] = 20
-    si 5, 30
-    stores 5, 0, 2    ; mem[A0+2] = 30
-    si 5, 40
-    stores 5, 0, 3    ; mem[A0+3] = 40
+    si s5, 10
+    stores s5, a0, 0    ; mem[A0+0] = 10
+    si s5, 20
+    stores s5, a0, 1    ; mem[A0+1] = 20
+    si s5, 30
+    stores s5, a0, 2    ; mem[A0+2] = 30
+    si s5, 40
+    stores s5, a0, 3    ; mem[A0+3] = 40
 
-    vload 0, 0        ; V0 = mem[A0 + n] for n=0..3
+    vload v0, a0        ; V0 = mem[A0 + n] for n=0..3
 
-    si 0, 1           ; S0 = 1
-    vadd 1, 0, 0      ; V1 = S0 + V0
+    si s0, 1            ; S0 = 1
+    vadd v1, s0, v0     ; V1 = S0 + V0
 
-    ai 2, 0
-    vget 1, 1, 2      ; S1 = V1[0] = 11
-    ai 2, 1
-    vget 2, 1, 2      ; S2 = V1[1] = 21
-    ai 2, 2
-    vget 3, 1, 2      ; S3 = V1[2] = 31
-    ai 2, 3
-    vget 4, 1, 2      ; S4 = V1[3] = 41
+    ai a2, 0
+    vget s1, v1, a2     ; S1 = V1[0] = 11
+    ai a2, 1
+    vget s2, v1, a2     ; S2 = V1[1] = 21
+    ai a2, 2
+    vget s3, v1, a2     ; S3 = V1[2] = 31
+    ai a2, 3
+    vget s4, v1, a2     ; S4 = V1[3] = 41
 
     exit

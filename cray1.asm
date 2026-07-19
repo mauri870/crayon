@@ -15,6 +15,45 @@
     #outp 0
 }
 
+#subruledef reg_a
+{
+    a0 => 0
+    a1 => 1
+    a2 => 2
+    a3 => 3
+    a4 => 4
+    a5 => 5
+    a6 => 6
+    a7 => 7
+    {n: u3} => n
+}
+
+#subruledef reg_s
+{
+    s0 => 0
+    s1 => 1
+    s2 => 2
+    s3 => 3
+    s4 => 4
+    s5 => 5
+    s6 => 6
+    s7 => 7
+    {n: u3} => n
+}
+
+#subruledef reg_v
+{
+    v0 => 0
+    v1 => 1
+    v2 => 2
+    v3 => 3
+    v4 => 4
+    v5 => 5
+    v6 => 6
+    v7 => 7
+    {n: u3} => n
+}
+
 #ruledef
 {
     ; -----------------------------------------------------------------------
@@ -29,135 +68,135 @@
     ; -----------------------------------------------------------------------
 
     ; 020 VL = Ak
-    setvl {k: u3}          => 0b0010000`7 @ 0`6 @ k`3
+    setvl {k: reg_a}          => 0b0010000`7 @ 0`6 @ k`3
 
     ; 033 VM = Sj
-    setvm {j: u3}           => 0b0011011`7 @ 0`3 @ j`3 @ 0`3
+    setvm {j: reg_s}           => 0b0011011`7 @ 0`3 @ j`3 @ 0`3
 
     ; 034 VM = 0
-    clrvm                   => 0b0011100`7 @ 0`9
+    clrvm                      => 0b0011100`7 @ 0`9
 
     ; 073 Si = VM
-    vmread {i: u3}          => 0b0111011`7 @ i`3 @ 0`6
+    vmread {i: reg_s}          => 0b0111011`7 @ i`3 @ 0`6
 
     ; -----------------------------------------------------------------------
     ; Vector element access
     ; -----------------------------------------------------------------------
 
     ; 076 Si = Vj[Ak]
-    vget {i: u3}, {j: u3}, {k: u3}  => 0b0111110`7 @ i`3 @ j`3 @ k`3
+    vget {i: reg_s}, {j: reg_v}, {k: reg_a}  => 0b0111110`7 @ i`3 @ j`3 @ k`3
 
     ; 077 Vi[Ak] = Sj
-    vput {i: u3}, {j: u3}, {k: u3}  => 0b0111111`7 @ i`3 @ j`3 @ k`3
+    vput {i: reg_v}, {j: reg_s}, {k: reg_a}  => 0b0111111`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Address register (A) — 24-bit
     ; -----------------------------------------------------------------------
 
     ; 022 Ai = jk: load 6-bit constant into Ai (single parcel)
-    ai {i: u3}, {v: u6}               => 0b0010010`7 @ i`3 @ v`6
+    ai {i: reg_a}, {v: u6}               => 0b0010010`7 @ i`3 @ v`6
 
     ; 021 Ai = v: load 22-bit constant into Ai (long)
-    ai_l {i: u3}, {v: u22}            => 0b0010001`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
+    ai_l {i: reg_a}, {v: u22}            => 0b0010001`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
 
     ; 030 Ai = Aj + Ak
-    aadd {i: u3}, {j: u3}, {k: u3}   => 0b0011000`7 @ i`3 @ j`3 @ k`3
+    aadd {i: reg_a}, {j: reg_a}, {k: reg_a}   => 0b0011000`7 @ i`3 @ j`3 @ k`3
 
     ; 031 Ai = Aj - Ak
-    asub {i: u3}, {j: u3}, {k: u3}   => 0b0011001`7 @ i`3 @ j`3 @ k`3
+    asub {i: reg_a}, {j: reg_a}, {k: reg_a}   => 0b0011001`7 @ i`3 @ j`3 @ k`3
 
     ; 032 Ai = Aj * Ak (lower 24 bits)
-    amul {i: u3}, {j: u3}, {k: u3}   => 0b0011010`7 @ i`3 @ j`3 @ k`3
+    amul {i: reg_a}, {j: reg_a}, {k: reg_a}   => 0b0011010`7 @ i`3 @ j`3 @ k`3
 
     ; 023 Ai = Sj (lower 24 bits)
-    a_s {i: u3}, {j: u3}              => 0b0010011`7 @ i`3 @ j`3 @ 0`3
+    a_s {i: reg_a}, {j: reg_s}                => 0b0010011`7 @ i`3 @ j`3 @ 0`3
 
     ; -----------------------------------------------------------------------
     ; Scalar register (S) — 64-bit
     ; -----------------------------------------------------------------------
 
     ; 040 Si = v: load 22-bit constant into Si (long)
-    si {i: u3}, {v: u22}              => 0b0100000`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
+    si {i: reg_s}, {v: u22}              => 0b0100000`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
 
     ; 043 Si = 0
-    sclr {i: u3}                      => 0b0100011`7 @ i`3 @ 0`6
+    sclr {i: reg_s}                      => 0b0100011`7 @ i`3 @ 0`6
 
     ; 071 Si = Ak (zero-extend from 24-bit)
-    s_a {i: u3}, {k: u3}              => 0b0111001`7 @ i`3 @ 0b000`3 @ k`3
+    s_a {i: reg_s}, {k: reg_a}           => 0b0111001`7 @ i`3 @ 0b000`3 @ k`3
 
     ; 054 Si <<= jk  (shift Si left by jk places in-place)
-    sshl {i: u3}, {jk: u6}            => 0b0101100`7 @ i`3 @ jk`6
+    sshl {i: reg_s}, {jk: u6}            => 0b0101100`7 @ i`3 @ jk`6
 
     ; 055 Si = Si >> (64-jk)  (shift Si right, complement of sshl)
-    sshr {i: u3}, {jk: u6}            => 0b0101101`7 @ i`3 @ jk`6
+    sshr {i: reg_s}, {jk: u6}            => 0b0101101`7 @ i`3 @ jk`6
 
     ; 060 Si = Sj + Sk
-    sadd {i: u3}, {j: u3}, {k: u3}   => 0b0110000`7 @ i`3 @ j`3 @ k`3
+    sadd {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110000`7 @ i`3 @ j`3 @ k`3
 
     ; 061 Si = Sj - Sk
-    ssub {i: u3}, {j: u3}, {k: u3}   => 0b0110001`7 @ i`3 @ j`3 @ k`3
+    ssub {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110001`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Scalar floating point
     ; -----------------------------------------------------------------------
 
-    ; 062 Si = Sj + Sk (FP add; with j=0 and S0=0: normalizes Sk)
-    fadd {i: u3}, {j: u3}, {k: u3}   => 0b0110010`7 @ i`3 @ j`3 @ k`3
+    ; 062 Si = Sj + Sk (FP add; with j=s0 and S0=0: normalizes Sk)
+    fadd {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110010`7 @ i`3 @ j`3 @ k`3
 
-    ; 063 Si = Sj - Sk (FP sub; with j=0 and S0=0: negates and normalizes Sk)
-    fsub {i: u3}, {j: u3}, {k: u3}   => 0b0110011`7 @ i`3 @ j`3 @ k`3
+    ; 063 Si = Sj - Sk (FP sub; with j=s0 and S0=0: negates and normalizes Sk)
+    fsub {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110011`7 @ i`3 @ j`3 @ k`3
 
     ; 064 Si = Sj * Sk (FP multiply, truncated)
-    fmul {i: u3}, {j: u3}, {k: u3}   => 0b0110100`7 @ i`3 @ j`3 @ k`3
+    fmul {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110100`7 @ i`3 @ j`3 @ k`3
 
     ; 065 Si = Sj * Sk (half-precision rounded)
-    fmulh {i: u3}, {j: u3}, {k: u3}  => 0b0110101`7 @ i`3 @ j`3 @ k`3
+    fmulh {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0110101`7 @ i`3 @ j`3 @ k`3
 
     ; 066 Si = Sj * Sk (full-precision rounded)
-    fmulr {i: u3}, {j: u3}, {k: u3}  => 0b0110110`7 @ i`3 @ j`3 @ k`3
+    fmulr {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0110110`7 @ i`3 @ j`3 @ k`3
 
     ; 067 Si = 2 * Sj * Sk
-    fmul2 {i: u3}, {j: u3}, {k: u3}  => 0b0110111`7 @ i`3 @ j`3 @ k`3
+    fmul2 {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0110111`7 @ i`3 @ j`3 @ k`3
 
     ; 070 Si = reciprocal approximation of Sj (k field unused)
-    frecip {i: u3}, {j: u3}           => 0b0111000`7 @ i`3 @ j`3 @ 0`3
+    frecip {i: reg_s}, {j: reg_s}              => 0b0111000`7 @ i`3 @ j`3 @ 0`3
 
     ; -----------------------------------------------------------------------
     ; Vector floating point multiply
     ; -----------------------------------------------------------------------
 
     ; 160 Vi = Sj * Vk
-    vfmul  {i: u3}, {j: u3}, {k: u3}  => 0b1110000`7 @ i`3 @ j`3 @ k`3
+    vfmul  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1110000`7 @ i`3 @ j`3 @ k`3
     ; 161 Vi = Vj * Vk
-    vfmulv {i: u3}, {j: u3}, {k: u3}  => 0b1110001`7 @ i`3 @ j`3 @ k`3
+    vfmulv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1110001`7 @ i`3 @ j`3 @ k`3
     ; 162 Vi = Sj *H Vk (half-precision rounded)
-    vfmulh  {i: u3}, {j: u3}, {k: u3} => 0b1110010`7 @ i`3 @ j`3 @ k`3
+    vfmulh  {i: reg_v}, {j: reg_s}, {k: reg_v} => 0b1110010`7 @ i`3 @ j`3 @ k`3
     ; 163 Vi = Vj *H Vk
-    vfmulhv {i: u3}, {j: u3}, {k: u3} => 0b1110011`7 @ i`3 @ j`3 @ k`3
+    vfmulhv {i: reg_v}, {j: reg_v}, {k: reg_v} => 0b1110011`7 @ i`3 @ j`3 @ k`3
     ; 164 Vi = Sj *R Vk (full-precision rounded)
-    vfmulr  {i: u3}, {j: u3}, {k: u3} => 0b1110100`7 @ i`3 @ j`3 @ k`3
+    vfmulr  {i: reg_v}, {j: reg_s}, {k: reg_v} => 0b1110100`7 @ i`3 @ j`3 @ k`3
     ; 165 Vi = Vj *R Vk
-    vfmulrv {i: u3}, {j: u3}, {k: u3} => 0b1110101`7 @ i`3 @ j`3 @ k`3
+    vfmulrv {i: reg_v}, {j: reg_v}, {k: reg_v} => 0b1110101`7 @ i`3 @ j`3 @ k`3
     ; 166 Vi = 2 * Sj * Vk
-    vfmul2  {i: u3}, {j: u3}, {k: u3} => 0b1110110`7 @ i`3 @ j`3 @ k`3
+    vfmul2  {i: reg_v}, {j: reg_s}, {k: reg_v} => 0b1110110`7 @ i`3 @ j`3 @ k`3
     ; 167 Vi = 2 * Vj * Vk
-    vfmul2v {i: u3}, {j: u3}, {k: u3} => 0b1110111`7 @ i`3 @ j`3 @ k`3
+    vfmul2v {i: reg_v}, {j: reg_v}, {k: reg_v} => 0b1110111`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Vector floating point add/sub
     ; -----------------------------------------------------------------------
 
     ; 170 Vi = Sj + Vk
-    vfadd  {i: u3}, {j: u3}, {k: u3}  => 0b1111000`7 @ i`3 @ j`3 @ k`3
+    vfadd  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1111000`7 @ i`3 @ j`3 @ k`3
     ; 171 Vi = Vj + Vk
-    vfaddv {i: u3}, {j: u3}, {k: u3}  => 0b1111001`7 @ i`3 @ j`3 @ k`3
+    vfaddv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1111001`7 @ i`3 @ j`3 @ k`3
     ; 172 Vi = Sj - Vk
-    vfsub  {i: u3}, {j: u3}, {k: u3}  => 0b1111010`7 @ i`3 @ j`3 @ k`3
+    vfsub  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1111010`7 @ i`3 @ j`3 @ k`3
     ; 173 Vi = Vj - Vk
-    vfsubv {i: u3}, {j: u3}, {k: u3}  => 0b1111011`7 @ i`3 @ j`3 @ k`3
+    vfsubv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1111011`7 @ i`3 @ j`3 @ k`3
 
     ; 174 Vi = reciprocal approximation of Vj (k unused)
-    vfrecip {i: u3}, {j: u3}           => 0b1111100`7 @ i`3 @ j`3 @ 0`3
+    vfrecip {i: reg_v}, {j: reg_v}              => 0b1111100`7 @ i`3 @ j`3 @ 0`3
 
     ; -----------------------------------------------------------------------
     ; Branches — all long (32-bit), target is a label (byte address / 2 = parcel index)
@@ -200,83 +239,83 @@
     ; -----------------------------------------------------------------------
 
     ; 0o100|h  Ai = mem[Ah + addr]
-    loada {i: u3}, {h: u3}, {addr: u22}  => 0b1000`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
+    loada {i: reg_a}, {h: reg_a}, {addr: u22}  => 0b1000`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
 
     ; 0o110|h  mem[Ah + addr] = Ai
-    storea {i: u3}, {h: u3}, {addr: u22} => 0b1001`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
+    storea {i: reg_a}, {h: reg_a}, {addr: u22} => 0b1001`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
 
     ; 0o120|h  Si = mem[Ah + addr]
-    loads {i: u3}, {h: u3}, {addr: u22}  => 0b1010`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
+    loads {i: reg_s}, {h: reg_a}, {addr: u22}  => 0b1010`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
 
     ; 0o130|h  mem[Ah + addr] = Si
-    stores {i: u3}, {h: u3}, {addr: u22} => 0b1011`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
+    stores {i: reg_s}, {h: reg_a}, {addr: u22} => 0b1011`4 @ h`3 @ i`3 @ (addr >> 16)`6 @ (addr & 0xffff)`16
 
     ; -----------------------------------------------------------------------
     ; Vector logical
     ; -----------------------------------------------------------------------
 
     ; 140 Vi = Sj & Vk
-    vand  {i: u3}, {j: u3}, {k: u3}  => 0b1100000`7 @ i`3 @ j`3 @ k`3
+    vand  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1100000`7 @ i`3 @ j`3 @ k`3
     ; 141 Vi = Vj & Vk
-    vandv {i: u3}, {j: u3}, {k: u3}  => 0b1100001`7 @ i`3 @ j`3 @ k`3
+    vandv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1100001`7 @ i`3 @ j`3 @ k`3
     ; 142 Vi = Sj | Vk
-    vor   {i: u3}, {j: u3}, {k: u3}  => 0b1100010`7 @ i`3 @ j`3 @ k`3
+    vor   {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1100010`7 @ i`3 @ j`3 @ k`3
     ; 143 Vi = Vj | Vk
-    vorv  {i: u3}, {j: u3}, {k: u3}  => 0b1100011`7 @ i`3 @ j`3 @ k`3
+    vorv  {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1100011`7 @ i`3 @ j`3 @ k`3
     ; 144 Vi = Sj ^ Vk
-    vxor  {i: u3}, {j: u3}, {k: u3}  => 0b1100100`7 @ i`3 @ j`3 @ k`3
+    vxor  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1100100`7 @ i`3 @ j`3 @ k`3
     ; 145 Vi = Vj ^ Vk
-    vxorv {i: u3}, {j: u3}, {k: u3}  => 0b1100101`7 @ i`3 @ j`3 @ k`3
+    vxorv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1100101`7 @ i`3 @ j`3 @ k`3
     ; 146 Vi[n] = VM[n] ? Sj : Vk[n]
-    vmerge  {i: u3}, {j: u3}, {k: u3} => 0b1100110`7 @ i`3 @ j`3 @ k`3
+    vmerge  {i: reg_v}, {j: reg_s}, {k: reg_v} => 0b1100110`7 @ i`3 @ j`3 @ k`3
     ; 147 Vi[n] = VM[n] ? Vj[n] : Vk[n]
-    vmergev {i: u3}, {j: u3}, {k: u3} => 0b1100111`7 @ i`3 @ j`3 @ k`3
+    vmergev {i: reg_v}, {j: reg_v}, {k: reg_v} => 0b1100111`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Vector shift (Ak holds shift count)
     ; -----------------------------------------------------------------------
 
     ; 150 Vi = Vj << Ak
-    vshl  {i: u3}, {j: u3}, {k: u3}  => 0b1101000`7 @ i`3 @ j`3 @ k`3
+    vshl  {i: reg_v}, {j: reg_v}, {k: reg_a}  => 0b1101000`7 @ i`3 @ j`3 @ k`3
     ; 151 Vi = Vj >> Ak
-    vshr  {i: u3}, {j: u3}, {k: u3}  => 0b1101001`7 @ i`3 @ j`3 @ k`3
+    vshr  {i: reg_v}, {j: reg_v}, {k: reg_a}  => 0b1101001`7 @ i`3 @ j`3 @ k`3
     ; 152 Vi = rotl(Vj, Ak)
-    vrotl {i: u3}, {j: u3}, {k: u3}  => 0b1101010`7 @ i`3 @ j`3 @ k`3
+    vrotl {i: reg_v}, {j: reg_v}, {k: reg_a}  => 0b1101010`7 @ i`3 @ j`3 @ k`3
     ; 153 Vi = rotr(Vj, Ak)
-    vrotr {i: u3}, {j: u3}, {k: u3}  => 0b1101011`7 @ i`3 @ j`3 @ k`3
+    vrotr {i: reg_v}, {j: reg_v}, {k: reg_a}  => 0b1101011`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Vector integer add
     ; -----------------------------------------------------------------------
 
     ; 154 Vi = Sj + Vk
-    vadd  {i: u3}, {j: u3}, {k: u3}  => 0b1101100`7 @ i`3 @ j`3 @ k`3
+    vadd  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1101100`7 @ i`3 @ j`3 @ k`3
     ; 155 Vi = Vj + Vk
-    vaddv {i: u3}, {j: u3}, {k: u3}  => 0b1101101`7 @ i`3 @ j`3 @ k`3
+    vaddv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1101101`7 @ i`3 @ j`3 @ k`3
     ; 156 Vi = Sj - Vk
-    vsub  {i: u3}, {j: u3}, {k: u3}  => 0b1101110`7 @ i`3 @ j`3 @ k`3
+    vsub  {i: reg_v}, {j: reg_s}, {k: reg_v}  => 0b1101110`7 @ i`3 @ j`3 @ k`3
     ; 157 Vi = Vj - Vk
-    vsubv {i: u3}, {j: u3}, {k: u3}  => 0b1101111`7 @ i`3 @ j`3 @ k`3
+    vsubv {i: reg_v}, {j: reg_v}, {k: reg_v}  => 0b1101111`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Vector mask test (result always goes to VM)
     ; -----------------------------------------------------------------------
 
     ; 175 VM[n] = 1 where Vj[n] == 0
-    vmsetz {j: u3}  => 0b1111101`7 @ 0`3 @ j`3 @ 0`3
+    vmsetz {j: reg_v}  => 0b1111101`7 @ 0`3 @ j`3 @ 0`3
     ; 175 VM[n] = 1 where Vj[n] != 0
-    vmsetn {j: u3}  => 0b1111101`7 @ 0`3 @ j`3 @ 1`3
+    vmsetn {j: reg_v}  => 0b1111101`7 @ 0`3 @ j`3 @ 1`3
     ; 175 VM[n] = 1 where Vj[n] > 0 (positive)
-    vmsetp {j: u3}  => 0b1111101`7 @ 0`3 @ j`3 @ 2`3
+    vmsetp {j: reg_v}  => 0b1111101`7 @ 0`3 @ j`3 @ 2`3
     ; 175 VM[n] = 1 where Vj[n] < 0 (negative)
-    vmsetm {j: u3}  => 0b1111101`7 @ 0`3 @ j`3 @ 3`3
+    vmsetm {j: reg_v}  => 0b1111101`7 @ 0`3 @ j`3 @ 3`3
 
     ; -----------------------------------------------------------------------
-    ; Vector memory load/store (base = A0; k=0 means stride 1)
+    ; Vector memory load/store (base = A0; k=a0 means stride 1)
     ; -----------------------------------------------------------------------
 
-    ; 176 Vi[n] = mem[A0 + n * Ak]  (k=0 -> stride 1)
-    vload  {i: u3}, {k: u3}  => 0b1111110`7 @ i`3 @ 0`3 @ k`3
-    ; 177 mem[A0 + n * Ak] = Vj[n]  (k=0 -> stride 1)
-    vstore {j: u3}, {k: u3}  => 0b1111111`7 @ 0`3 @ j`3 @ k`3
+    ; 176 Vi[n] = mem[A0 + n * Ak]  (k=a0 -> stride 1)
+    vload  {i: reg_v}, {k: reg_a}  => 0b1111110`7 @ i`3 @ 0`3 @ k`3
+    ; 177 mem[A0 + n * Ak] = Vj[n]  (k=a0 -> stride 1)
+    vstore {j: reg_v}, {k: reg_a}  => 0b1111111`7 @ 0`3 @ j`3 @ k`3
 }
