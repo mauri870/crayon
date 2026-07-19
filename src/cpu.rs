@@ -94,6 +94,7 @@ impl fmt::Display for Trap {
 pub struct Cpu {
     pub regs: Registers,
     pub mem: Memory,
+    pub cycle: u64,
     ibufs: InstructionBuffers,
 }
 
@@ -102,6 +103,7 @@ impl Cpu {
         Self {
             regs: Registers::new(),
             mem,
+            cycle: 0,
             ibufs: InstructionBuffers::new(),
         }
     }
@@ -118,10 +120,21 @@ impl Cpu {
         self.execute(d)
     }
 
+    // Advances cycle past all source-register readiness times, issues the instruction,
+    // and returns the cycle at which it issued.
+    fn issue(&mut self, srcs: &[u64]) -> u64 {
+        self.cycle = srcs.iter().copied().fold(self.cycle, u64::max);
+        let issued_at = self.cycle;
+        self.cycle += 1;
+        issued_at
+    }
+
     fn execute(&mut self, d: crate::instr::Decoded) -> Result<(), Trap> {
         let i = d.i as usize;
         let j = d.j as usize;
         let k = d.k as usize;
+
+        self.issue(&[]);
 
         match d.opcode {
             // --- Control ---

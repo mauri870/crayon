@@ -41,7 +41,7 @@ fn main() {
         match cpu.step() {
             Ok(()) => {}
             Err(Trap::NormalExit) => {
-                println!("halted: normal exit at P={:06X}", cpu.regs.p);
+                println!("halted: normal exit at P={:06X}  cycles={}", cpu.regs.p, cpu.cycle);
                 break;
             }
             Err(t) => {
