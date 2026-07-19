@@ -26,9 +26,11 @@ For example, [kepler.asm](examples/kepler.asm) computes the orbital periods of a
 The defining feature of the CRAY-1 was its eight vector registers, each containing 64
 64-bit elements. A single instruction could initiate a floating-point multiply across
 all 64 element pairs, with the pipeline producing one result every clock cycle (12.5 ns)
-once full. On vector workloads, the machine sustained up to 80 million floating-point operations
-per second. Programs that take advantage of the vector features can achieve substantially
-higher rates than scalar implementations on the same hardware.
+once full. On vector workloads, the machine could produce up to 160 million floating-point results
+per second: the 80 MHz clock issues one instruction per cycle, but when a vector multiply
+and a vector add are chained, both functional units contribute a result on every cycle.
+Programs that take advantage of the vector features can achieve substantially higher rates
+than scalar implementations on the same hardware.
 
 The machine also supported *chaining*: the output of one vector functional unit could
 feed directly into another before the first operation had completed, allowing dependent
@@ -36,8 +38,9 @@ instructions to overlap in execution. The same principle is used by modern SIMD
 instruction sets such as AVX-512, more than four decades later.
 
 The CRAY-1's iconic cylindrical shape was driven by engineering constraints rather than
-aesthetics. No wire inside the machine was longer than four feet, reducing signal
-propagation delays and enabling a higher clock frequency. The padded bench surrounding
+aesthetics. No wire inside the machine was longer than four feet — the total internal wiring
+stretched to roughly 50 miles — reducing signal propagation delays and enabling a
+higher clock frequency. The padded bench surrounding
 the base concealed the power supplies and the Freon cooling system required to dissipate
 the machine's 115 to 150 kW power consumption.
 
