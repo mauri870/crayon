@@ -47,7 +47,7 @@
 
 ; Semi-major axes of the eight planets in AU, encoded as Cray-1 64-bit FP.
 ; Values from the IAU mean orbital elements (J2000.0 epoch).
-#align 8
+#align 64
 semi_major_axes:
     #d64 0x3fffc631d712a0ec   ; Mercury   0.387 AU
     #d64 0x4000b92c49342678   ; Venus     0.723 AU
