@@ -44,7 +44,7 @@ the machine's 115 to 150 kW power consumption.
 ## Architecture
 
 - **Clock**: 12.5 ns (80 MHz)
-- **Memory**: up to 1M 64-bit words, 16 interleaved banks, word-addressed
+- **Memory**: up to 1M 64-bit words (8 MB), 16 interleaved banks, word-addressed
 - **Registers**: 8x24-bit address (A), 8x64-bit scalar (S), 8x(64x64-bit) vector (V), plus 64 intermediate address (B) and scalar (T) registers for staging
 - **Vector length/mask**: 7-bit VL register (0–64), 64-bit VM mask register
 - **Instruction size**: 16-bit (one parcel) or 32-bit (two parcels); 128 opcodes
