@@ -111,6 +111,12 @@
     ; 023 Ai = Sj (lower 24 bits)
     a_s {i: reg_a}, {j: reg_s}                => 0b0010011`7 @ i`3 @ j`3 @ 0`3
 
+    ; 026 Ai = popcount(Sj); 4 CP
+    popcnt {i: reg_a}, {j: reg_s}             => 0b0010110`7 @ i`3 @ j`3 @ 0`3
+
+    ; 027 Ai = leading_zeros(Sj); 3 CP
+    lzcnt  {i: reg_a}, {j: reg_s}             => 0b0010111`7 @ i`3 @ j`3 @ 0`3
+
     ; -----------------------------------------------------------------------
     ; B register (24-bit intermediate address registers, B00-B77)
     ; The 6-bit index n encodes as j=n>>3, k=n&7 in the parcel.
