@@ -135,8 +135,11 @@
     ; Scalar register (S) — 64-bit
     ; -----------------------------------------------------------------------
 
-    ; 040 Si = v: load 22-bit constant into Si (long)
+    ; 040 Si = v: load 22-bit zero-extended constant into Si (long)
     si {i: reg_s}, {v: u22}              => 0b0100000`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
+
+    ; 041 Si = v: load 22-bit sign-extended constant into Si (long)
+    sis {i: reg_s}, {v: s22}             => 0b0100001`7 @ i`3 @ ((v >> 16) & 0x3f)`6 @ (v & 0xffff)`16
 
     ; 043 Si = 0
     sclr {i: reg_s}                      => 0b0100011`7 @ i`3 @ 0`6

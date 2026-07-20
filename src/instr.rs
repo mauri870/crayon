@@ -55,8 +55,8 @@ fn is_long(opcode: u8, i: u8) -> bool {
         0o10..=0o17 => true,
         // Transmit 22-bit constant to A register (single-parcel 0o20=VL=Ak excluded)
         0o21 => true,
-        // Transmit 22-bit constant to S register
-        0o40 => true,
+        // Transmit 22-bit constant to S register (zero-extended or sign-extended)
+        0o40 | 0o41 => true,
         // Memory read/store with explicit word address
         0o100..=0o137 => true,
         _ => false,

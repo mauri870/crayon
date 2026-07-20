@@ -276,6 +276,8 @@ impl Cpu {
             // --- Scalar transmit ---
             // Si = 22-bit constant (zero-extended)
             0o040 => { self.regs.s[i] = d.addr22 as u64; self.sr_ready_at[i] = 0; }
+            // Si = 22-bit constant (sign-extended)
+            0o041 => { self.regs.s[i] = (((d.addr22 as i32) << 10) >> 10) as i64 as u64; self.sr_ready_at[i] = 0; }
             // Si = 0
             0o043 => { self.regs.s[i] = 0; self.sr_ready_at[i] = 0; }
             // Si = Ak (zero-extended from 24-bit)
