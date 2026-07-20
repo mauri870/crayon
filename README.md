@@ -67,3 +67,5 @@ The ruleset is defined in `cray1.asm` and embedded in the binary. See [examples]
 ## References
 
 Cray Research, Inc. [*The CRAY-1 Computer System*](https://s3data.computerhistory.org/brochures/cray.cray1.1977.102638650.pdf) (1977), publication number 2240008 8.
+
+Cray Research, Inc. [*CRAY-1 Hardware Reference Manual*](https://bitsavers.trailing-edge.com/pdf/cray/CRAY-1/2240004C_CRAY-1_Hardware_Reference_Nov77.pdf) (November 1977), publication number 2240004C.
