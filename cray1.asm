@@ -138,11 +138,23 @@
     ; 071 Si = Ak (zero-extend from 24-bit)
     s_a {i: reg_s}, {k: reg_a}           => 0b0111001`7 @ i`3 @ 0b000`3 @ k`3
 
+    ; 052 S0 = Si << jk  (shift into S0)
+    sshl0 {i: reg_s}, {jk: u6}           => 0b0101010`7 @ i`3 @ jk`6
+
+    ; 053 S0 = Si >> (64-jk)  (shift into S0)
+    sshr0 {i: reg_s}, {jk: u6}           => 0b0101011`7 @ i`3 @ jk`6
+
     ; 054 Si <<= jk  (shift Si left by jk places in-place)
     sshl {i: reg_s}, {jk: u6}            => 0b0101100`7 @ i`3 @ jk`6
 
     ; 055 Si = Si >> (64-jk)  (shift Si right, complement of sshl)
     sshr {i: reg_s}, {jk: u6}            => 0b0101101`7 @ i`3 @ jk`6
+
+    ; 056 Si = high 64 bits of (Si:Sj) << Ak  (double-length left shift)
+    sdsl {i: reg_s}, {j: reg_s}, {k: reg_a}  => 0b0101110`7 @ i`3 @ j`3 @ k`3
+
+    ; 057 Si = low 64 bits of (Sj:Si) >> Ak  (double-length right shift)
+    sdsr {i: reg_s}, {j: reg_s}, {k: reg_a}  => 0b0101111`7 @ i`3 @ j`3 @ k`3
 
     ; 060 Si = Sj + Sk
     sadd {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110000`7 @ i`3 @ j`3 @ k`3
