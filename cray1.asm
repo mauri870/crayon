@@ -137,6 +137,23 @@
     ssub {i: reg_s}, {j: reg_s}, {k: reg_s}   => 0b0110001`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
+    ; Scalar logical
+    ; -----------------------------------------------------------------------
+
+    ; 044 Si = Sj & Sk
+    sand  {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0100100`7 @ i`3 @ j`3 @ k`3
+    ; 045 Si = Sj & ~Sk
+    sandc {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0100101`7 @ i`3 @ j`3 @ k`3
+    ; 046 Si = Sj ^ Sk
+    sxor  {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0100110`7 @ i`3 @ j`3 @ k`3
+    ; 047 Si = ~(Sj ^ Sk)  (equivalence / XNOR)
+    sxeqv {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0100111`7 @ i`3 @ j`3 @ k`3
+    ; 050 Si = (Si & ~Sk) | (Sj & Sk)
+    smerge  {i: reg_s}, {j: reg_s}, {k: reg_s} => 0b0101000`7 @ i`3 @ j`3 @ k`3
+    ; 051 Si = (Si & ~mask) | (Sj & mask)  where mask = sign bit of Sj broadcast to all bits
+    smerges {i: reg_s}, {j: reg_s}             => 0b0101001`7 @ i`3 @ j`3 @ 0`3
+
+    ; -----------------------------------------------------------------------
     ; Scalar floating point
     ; -----------------------------------------------------------------------
 
