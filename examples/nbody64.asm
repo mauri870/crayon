@@ -11,7 +11,7 @@
 ; seed followed by two Newton-Raphson iterations. Each 64-element dot
 ; product is reduced with six rotate-and-add passes.
 ;
-; Expect: VL=64 S1=0x3fed800000000000 S4=0x4000800000000000 S7=0xc001800000000000 S2=0xbffde9f5fc182b9c cycles=8471
+; Expect: VL=64 S1=0x3fed800000000000 S4=0x4000800000000000 S7=0xc001800000000000 S2=0xbffde9f5fc182b9c cycles=185224
 ;         VL    eps^2 = 2^-20         0.5                   -1.0                  accz[0] ≈ -0.114 (body 0 net z-accel; reference -0.120)
 
     ; VL = 64, full vector width for all source-body sweeps

@@ -5,7 +5,7 @@
 ; V1 = 1 + V0 = {11, 21, 31, 41}
 ; S1-S4 receive extracted elements for verification
 ;
-; Expect: S1=11 S2=21 S3=31 S4=41 cycles=23
+; Expect: S1=11 S2=21 S3=31 S4=41 cycles=34
 
     ai a0, 50           ; A0 = 50 (base address)
     ai a1, 4            ; A1 = 4

@@ -11,6 +11,14 @@ const ADDR_MASK: u32 = 0x00FF_FFFF;
 // Maximum vector length
 pub const VL_MAX: u8 = 64;
 
+// Vector functional unit indices (for vfu_free_at).
+const VFU_LOGICAL: usize = 0; // vector logical: 140-147, 175
+const VFU_SHIFT:   usize = 1; // vector shift:   150-153
+const VFU_ADD:     usize = 2; // vector add:     154-157
+const VFU_FPMUL:   usize = 3; // FP multiply:    160-167
+const VFU_FPADD:   usize = 4; // FP add:         170-173
+const VFU_FPRECIP: usize = 5; // FP reciprocal:  174
+
 #[derive(Debug)]
 pub struct Registers {
     // A0-A7: primary address registers (24-bit)
@@ -100,6 +108,12 @@ pub struct Cpu {
     ar_ready_at: [u64; 8],
     // Per scalar register: earliest cycle when the result is available.
     sr_ready_at: [u64; 8],
+    // Per vector register: cycle when the LAST element is ready (used by non-pipelined reads).
+    vr_ready_at: [u64; 8],
+    // Per vector register: cycle when chaining can start (f.u.time + 2 CP per HRM 3-5).
+    vr_chain_at: [u64; 8],
+    // Per vector functional unit: earliest cycle the unit is free for a new vector operation.
+    vfu_free_at: [u64; 6],
 }
 
 impl Cpu {
@@ -111,6 +125,9 @@ impl Cpu {
             ibufs: InstructionBuffers::new(),
             ar_ready_at: [0; 8],
             sr_ready_at: [0; 8],
+            vr_ready_at: [0; 8],
+            vr_chain_at: [0; 8],
+            vfu_free_at: [0; 6],
         }
     }
 
@@ -126,10 +143,10 @@ impl Cpu {
         self.execute(d)
     }
 
-    // Advances cycle past all source-register readiness times, issues the instruction,
+    // Advances cycle past all source-register and VFU readiness times, issues the instruction,
     // and returns the cycle at which it issued.
-    fn issue(&mut self, srcs: &[u64]) -> u64 {
-        self.cycle = srcs.iter().copied().fold(self.cycle, u64::max);
+    fn issue(&mut self, srcs: &[u64], vfu_ready: u64) -> u64 {
+        self.cycle = srcs.iter().copied().fold(self.cycle.max(vfu_ready), u64::max);
         let issued_at = self.cycle;
         self.cycle += 1;
         issued_at
@@ -143,8 +160,11 @@ impl Cpu {
         let h = (d.opcode & 7) as usize; // low 3 bits: base A register for memory opcodes
         let srcs: [u64; 2] = match d.opcode {
             0o010..=0o013                => [self.ar_ready_at[0], 0],
+            // Conditional branches on S0 gate on sr_ready_at[0].
+            0o014..=0o017                => [self.sr_ready_at[0], 0],
             0o020                        => [self.ar_ready_at[k], 0],
             0o025                        => [self.ar_ready_at[i], 0],
+            0o026 | 0o027                => [self.sr_ready_at[j], 0],
             0o030 | 0o031 | 0o032        => [self.ar_ready_at[j], self.ar_ready_at[k]],
             0o044..=0o047                => [self.sr_ready_at[j], self.sr_ready_at[k]],
             0o050                        => [self.sr_ready_at[i].max(self.sr_ready_at[j]), self.sr_ready_at[k]],
@@ -158,17 +178,41 @@ impl Cpu {
             0o070                        => [self.sr_ready_at[j], 0],
             0o071 if j <= 2              => [self.ar_ready_at[k], 0],
             0o075                        => [self.sr_ready_at[i], 0],
+            0o076                        => [self.vr_ready_at[j], self.ar_ready_at[k]],
             0o077                        => [self.sr_ready_at[j], self.ar_ready_at[k]],
             0o100..=0o107                => [self.ar_ready_at[h], 0],
             0o110..=0o117                => [self.ar_ready_at[h], self.ar_ready_at[i]],
             0o120..=0o127                => [self.ar_ready_at[h], 0],
             0o130..=0o137                => [self.ar_ready_at[h], self.sr_ready_at[i]],
-            0o150..=0o153                => [self.ar_ready_at[k], 0],
+            // Vector logical/int/fp: even opcodes have scalar Sj source, odd have vector Vj source.
+            // All chain on Vk (first element of source vector register).
+            0o140 | 0o142 | 0o144 | 0o146 | 0o154 | 0o156 | 0o160 | 0o162 | 0o164 | 0o166 | 0o170 | 0o172
+                                         => [self.sr_ready_at[j], self.vr_chain_at[k]],
+            0o141 | 0o143 | 0o145 | 0o147 | 0o155 | 0o157 | 0o161 | 0o163 | 0o165 | 0o167 | 0o171 | 0o173
+                                         => [self.vr_chain_at[j], self.vr_chain_at[k]],
+            // Vector shift: reads Vj (chainable) and Ak (address).
+            0o150..=0o153                => [self.vr_chain_at[j], self.ar_ready_at[k]],
+            // Reciprocal and mask test read one vector source.
+            0o174 | 0o175                => [self.vr_chain_at[j], 0],
             0o176                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
-            0o177                        => [self.ar_ready_at[0], if k != 0 { self.ar_ready_at[k] } else { 0 }],
+            // Vector store must wait for all VL elements of Vj before it can stream them to memory.
+            0o177                        => [self.vr_ready_at[j].max(self.ar_ready_at[0]), if k != 0 { self.ar_ready_at[k] } else { 0 }],
             _                            => [0, 0],
         };
-        let issued_at = self.issue(&srcs);
+
+        // Gate on vector functional unit availability (same unit can't start a new vector op
+        // until the previous one has produced its last result).
+        let vfu_ready: u64 = match d.opcode {
+            0o140..=0o147 | 0o175 => self.vfu_free_at[VFU_LOGICAL],
+            0o150..=0o153         => self.vfu_free_at[VFU_SHIFT],
+            0o154..=0o157         => self.vfu_free_at[VFU_ADD],
+            0o160..=0o167         => self.vfu_free_at[VFU_FPMUL],
+            0o170..=0o173         => self.vfu_free_at[VFU_FPADD],
+            0o174                 => self.vfu_free_at[VFU_FPRECIP],
+            _                     => 0,
+        };
+
+        let issued_at = self.issue(&srcs, vfu_ready);
 
         match d.opcode {
             // --- Control ---
@@ -214,6 +258,12 @@ impl Cpu {
             0o024 => { self.regs.write_a(i, self.regs.b[j << 3 | k]); self.ar_ready_at[i] = 0; }
             // Bjk = Ai
             0o025 => self.regs.write_b(j << 3 | k, self.regs.a[i]),
+
+            // --- Population / leading-zero count (result to A register) ---
+            // Ai = popcount(Sj); 4 CP
+            0o026 => { self.regs.write_a(i, self.regs.s[j].count_ones()); self.ar_ready_at[i] = issued_at + 4; }
+            // Ai = leading_zeros(Sj); 3 CP
+            0o027 => { self.regs.write_a(i, self.regs.s[j].leading_zeros()); self.ar_ready_at[i] = issued_at + 3; }
 
             // --- Address integer arithmetic ---
             // Ai = Aj + Ak  (24-bit, wraps); 2 CP latency
@@ -349,76 +399,91 @@ impl Cpu {
                 self.mem.write(addr, self.regs.s[i]);
             }
 
-            // --- Vector floating point multiply (0o160-0o167) ---
-            0o160 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
-            0o161 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
-            0o162 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
-            0o163 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
-            0o164 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } }
-            0o165 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
-            0o166 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * sv * fp::to_f64(self.regs.v[k][n])); } }
-            0o167 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } }
+            // --- Vector floating point multiply (0o160-0o167); startup=7 CP ---
+            // chain_at = issued_at + 9 (startup + 2, per HRM chain slot rule)
+            // vfu_free_at = issued_at + 7 + vl (unit busy until last result)
+            0o160 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o161 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o162 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o163 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o164 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o165 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o166 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * sv * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
+            0o167 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(2.0 * fp::to_f64(self.regs.v[j][n]) * fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 9; self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPMUL] = issued_at + 7 + vl as u64; }
 
-            // --- Vector floating point add/sub (0o170-0o173) ---
-            0o170 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv + fp::to_f64(self.regs.v[k][n])); } }
-            0o171 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) + fp::to_f64(self.regs.v[k][n])); } }
-            0o172 => { let (vl, sv) = (self.regs.vl as usize, fp::to_f64(self.regs.s[j])); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv - fp::to_f64(self.regs.v[k][n])); } }
-            0o173 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) - fp::to_f64(self.regs.v[k][n])); } }
+            // --- Vector floating point add/sub (0o170-0o173); startup=6 CP ---
+            // chain_at = issued_at + 8
+            0o170 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv + fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 8; self.vr_ready_at[i] = issued_at + 6 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPADD] = issued_at + 6 + vl as u64; }
+            0o171 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) + fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 8; self.vr_ready_at[i] = issued_at + 6 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPADD] = issued_at + 6 + vl as u64; }
+            0o172 => { let vl = self.regs.vl as usize; let sv = fp::to_f64(self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = fp::from_f64(sv - fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 8; self.vr_ready_at[i] = issued_at + 6 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPADD] = issued_at + 6 + vl as u64; }
+            0o173 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]) - fp::to_f64(self.regs.v[k][n])); } self.vr_chain_at[i] = issued_at + 8; self.vr_ready_at[i] = issued_at + 6 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPADD] = issued_at + 6 + vl as u64; }
 
-            // --- Vector floating point reciprocal (0o174) ---
-            0o174 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]).recip()); } }
+            // --- Vector floating point reciprocal (0o174); startup=14 CP ---
+            // chain_at = issued_at + 16
+            0o174 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = fp::from_f64(fp::to_f64(self.regs.v[j][n]).recip()); } self.vr_chain_at[i] = issued_at + 16; self.vr_ready_at[i] = issued_at + 14 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_FPRECIP] = issued_at + 14 + vl as u64; }
 
-            // --- Vector logical (0o140-0o147) ---
+            // --- Vector logical (0o140-0o147); startup=2 CP ---
+            // chain_at = issued_at + 4
             // VM bit n = bit (63-n) of the vm u64 (Cray-1 bit 0 = MSB convention).
-            0o140 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv & self.regs.v[k][n]; } }
-            0o141 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] & self.regs.v[k][n]; } }
-            0o142 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv | self.regs.v[k][n]; } }
-            0o143 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] | self.regs.v[k][n]; } }
-            0o144 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv ^ self.regs.v[k][n]; } }
-            0o145 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] ^ self.regs.v[k][n]; } }
+            0o140 => { let vl = self.regs.vl as usize; let sv = self.regs.s[j]; for n in 0..vl { self.regs.v[i][n] = sv & self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
+            0o141 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] & self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
+            0o142 => { let vl = self.regs.vl as usize; let sv = self.regs.s[j]; for n in 0..vl { self.regs.v[i][n] = sv | self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
+            0o143 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] | self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
+            0o144 => { let vl = self.regs.vl as usize; let sv = self.regs.s[j]; for n in 0..vl { self.regs.v[i][n] = sv ^ self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
+            0o145 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n] ^ self.regs.v[k][n]; } self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64; }
             0o146 => {
-                let (vl, sv, vm) = (self.regs.vl as usize, self.regs.s[j], self.regs.vm);
+                let vl = self.regs.vl as usize;
+                let (sv, vm) = (self.regs.s[j], self.regs.vm);
                 for n in 0..vl {
                     self.regs.v[i][n] = if (vm >> (63 - n)) & 1 != 0 { sv } else { self.regs.v[k][n] };
                 }
+                self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64;
             }
             0o147 => {
-                let (vl, vm) = (self.regs.vl as usize, self.regs.vm);
+                let vl = self.regs.vl as usize;
+                let vm = self.regs.vm;
                 for n in 0..vl {
-                    let val = if (vm >> (63 - n)) & 1 != 0 { self.regs.v[j][n] } else { self.regs.v[k][n] };
-                    self.regs.v[i][n] = val;
+                    self.regs.v[i][n] = if (vm >> (63 - n)) & 1 != 0 { self.regs.v[j][n] } else { self.regs.v[k][n] };
                 }
+                self.vr_chain_at[i] = issued_at + 4; self.vr_ready_at[i] = issued_at + 2 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64;
             }
 
-            // --- Vector shift (0o150-0o153) ---
+            // --- Vector shift (0o150-0o153); startup=4 CP ---
+            // chain_at = issued_at + 6
             // 0o150/0o151: per-element bit shift left/right by Ak
             // 0o152/0o153: double-shift [Vj|Vj] left/right by Ak = circular element rotation
             0o150 => {
-                let (vl, count) = (self.regs.vl as usize, self.regs.a[k] & 0x7F);
+                let vl = self.regs.vl as usize; let count = self.regs.a[k] & 0x7F;
                 for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] << count }; }
+                self.vr_chain_at[i] = issued_at + 6; self.vr_ready_at[i] = issued_at + 4 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_SHIFT] = issued_at + 4 + vl as u64;
             }
             0o151 => {
-                let (vl, count) = (self.regs.vl as usize, self.regs.a[k] & 0x7F);
+                let vl = self.regs.vl as usize; let count = self.regs.a[k] & 0x7F;
                 for n in 0..vl { self.regs.v[i][n] = if count >= 64 { 0 } else { self.regs.v[j][n] >> count }; }
+                self.vr_chain_at[i] = issued_at + 6; self.vr_ready_at[i] = issued_at + 4 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_SHIFT] = issued_at + 4 + vl as u64;
             }
             0o152 => {
                 let vl = self.regs.vl as usize;
                 let count = if vl == 0 { 0 } else { (self.regs.a[k] as usize) % vl };
                 for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][(n + count) % vl]; }
+                self.vr_chain_at[i] = issued_at + 6; self.vr_ready_at[i] = issued_at + 4 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_SHIFT] = issued_at + 4 + vl as u64;
             }
             0o153 => {
                 let vl = self.regs.vl as usize;
                 let count = if vl == 0 { 0 } else { (self.regs.a[k] as usize) % vl };
                 for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][(n + vl - count) % vl]; }
+                self.vr_chain_at[i] = issued_at + 6; self.vr_ready_at[i] = issued_at + 4 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_SHIFT] = issued_at + 4 + vl as u64;
             }
 
-            // --- Vector integer add (0o154-0o157) ---
-            0o154 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv.wrapping_add(self.regs.v[k][n]); } }
-            0o155 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_add(self.regs.v[k][n]); } }
-            0o156 => { let (vl, sv) = (self.regs.vl as usize, self.regs.s[j]); for n in 0..vl { self.regs.v[i][n] = sv.wrapping_sub(self.regs.v[k][n]); } }
-            0o157 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_sub(self.regs.v[k][n]); } }
+            // --- Vector integer add (0o154-0o157); startup=3 CP ---
+            // chain_at = issued_at + 5
+            0o154 => { let vl = self.regs.vl as usize; let sv = self.regs.s[j]; for n in 0..vl { self.regs.v[i][n] = sv.wrapping_add(self.regs.v[k][n]); } self.vr_chain_at[i] = issued_at + 5; self.vr_ready_at[i] = issued_at + 3 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_ADD] = issued_at + 3 + vl as u64; }
+            0o155 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_add(self.regs.v[k][n]); } self.vr_chain_at[i] = issued_at + 5; self.vr_ready_at[i] = issued_at + 3 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_ADD] = issued_at + 3 + vl as u64; }
+            0o156 => { let vl = self.regs.vl as usize; let sv = self.regs.s[j]; for n in 0..vl { self.regs.v[i][n] = sv.wrapping_sub(self.regs.v[k][n]); } self.vr_chain_at[i] = issued_at + 5; self.vr_ready_at[i] = issued_at + 3 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_ADD] = issued_at + 3 + vl as u64; }
+            0o157 => { let vl = self.regs.vl as usize; for n in 0..vl { self.regs.v[i][n] = self.regs.v[j][n].wrapping_sub(self.regs.v[k][n]); } self.vr_chain_at[i] = issued_at + 5; self.vr_ready_at[i] = issued_at + 3 + vl.saturating_sub(1) as u64; self.vfu_free_at[VFU_ADD] = issued_at + 3 + vl as u64; }
 
             // --- Vector mask test (0o175) ---
+            // Uses VFU_LOGICAL (same unit as 140-147; cannot chain with them).
             // k field encodes condition: 0=zero, 1=nonzero, 2=positive(>0), 3=negative(<0)
             0o175 => {
                 let vl = self.regs.vl as usize;
@@ -435,9 +500,11 @@ impl Cpu {
                     if set { vm |= 1u64 << (63 - n); }
                 }
                 self.regs.vm = vm;
+                self.vfu_free_at[VFU_LOGICAL] = issued_at + 2 + vl as u64;
             }
 
-            // --- Vector memory load/store (0o176-0o177) ---
+            // --- Vector memory load/store (0o176-0o177); startup=7 CP ---
+            // chain_at = issued_at + 9 (startup + 2); no VFU reservation (memory unit).
             // 176ixk: Vi[n] = mem[A0 + n*Ak]; k=0 means stride=1
             // 177xjk: mem[A0 + n*Ak] = Vj[n]; k=0 means stride=1
             0o176 => {
@@ -448,6 +515,8 @@ impl Cpu {
                     let addr = base.wrapping_add(stride.wrapping_mul(n as u32)) & ADDR_MASK;
                     self.regs.v[i][n] = self.mem.read(addr);
                 }
+                self.vr_chain_at[i] = issued_at + 9;
+                self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64;
             }
             0o177 => {
                 let vl = self.regs.vl as usize;
