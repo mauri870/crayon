@@ -200,16 +200,19 @@ impl Cpu {
             _                            => [0, 0],
         };
 
-        // Gate on vector functional unit availability (same unit can't start a new vector op
-        // until the previous one has produced its last result).
+        // Gate on functional unit availability. Scalar and vector FP ops share the same
+        // physical units, so both directions must check and update vfu_free_at.
         let vfu_ready: u64 = match d.opcode {
-            0o140..=0o147 | 0o175 => self.vfu_free_at[VFU_LOGICAL],
-            0o150..=0o153         => self.vfu_free_at[VFU_SHIFT],
-            0o154..=0o157         => self.vfu_free_at[VFU_ADD],
-            0o160..=0o167         => self.vfu_free_at[VFU_FPMUL],
-            0o170..=0o173         => self.vfu_free_at[VFU_FPADD],
-            0o174                 => self.vfu_free_at[VFU_FPRECIP],
-            _                     => 0,
+            0o062 | 0o063             => self.vfu_free_at[VFU_FPADD],
+            0o064..=0o067             => self.vfu_free_at[VFU_FPMUL],
+            0o070                     => self.vfu_free_at[VFU_FPRECIP],
+            0o140..=0o147 | 0o175     => self.vfu_free_at[VFU_LOGICAL],
+            0o150..=0o153             => self.vfu_free_at[VFU_SHIFT],
+            0o154..=0o157             => self.vfu_free_at[VFU_ADD],
+            0o160..=0o167             => self.vfu_free_at[VFU_FPMUL],
+            0o170..=0o173             => self.vfu_free_at[VFU_FPADD],
+            0o174                     => self.vfu_free_at[VFU_FPRECIP],
+            _                         => 0,
         };
 
         let issued_at = self.issue(&srcs, vfu_ready);
@@ -302,23 +305,25 @@ impl Cpu {
             0o077 => {
                 let elem = self.regs.a[k] as usize & 63;
                 self.regs.v[i][elem] = self.regs.s[j];
+                self.vr_chain_at[i] = issued_at + 1;
+                self.vr_ready_at[i] = issued_at + 1;
             }
 
             // --- Scalar floating point (0o062-0o070); latencies: add=6, mul=7, recip=14 CP ---
-            // Si = Sj + Sk (FP add; j=0 with S0=0 normalizes Sk)
-            0o062 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) + fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; }
-            // Si = Sj - Sk (FP sub; j=0 with S0=0 negates and normalizes Sk)
-            0o063 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) - fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; }
+            // Si = Sj + Sk (FP add; j=0 with S0=0 normalizes Sk); 6 CP
+            0o062 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) + fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; self.vfu_free_at[VFU_FPADD]   = issued_at + 7; }
+            // Si = Sj - Sk (FP sub; j=0 with S0=0 negates and normalizes Sk); 6 CP
+            0o063 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) - fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 6; self.vfu_free_at[VFU_FPADD]   = issued_at + 7; }
             // Si = Sj * Sk (FP multiply, truncated); 7 CP
-            0o064 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            0o064 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; self.vfu_free_at[VFU_FPMUL]   = issued_at + 8; }
             // Si = Sj * Sk (half-precision rounded); 7 CP
-            0o065 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            0o065 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; self.vfu_free_at[VFU_FPMUL]   = issued_at + 8; }
             // Si = Sj * Sk (full-precision rounded); 7 CP
-            0o066 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            0o066 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; self.vfu_free_at[VFU_FPMUL]   = issued_at + 8; }
             // Si = 2 * Sj * Sk; 7 CP
-            0o067 => { self.regs.s[i] = fp::from_f64(2.0 * fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; }
+            0o067 => { self.regs.s[i] = fp::from_f64(2.0 * fp::to_f64(self.regs.s[j]) * fp::to_f64(self.regs.s[k])); self.sr_ready_at[i] = issued_at + 7; self.vfu_free_at[VFU_FPMUL] = issued_at + 8; }
             // Si = reciprocal approximation of Sj; 14 CP
-            0o070 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]).recip()); self.sr_ready_at[i] = issued_at + 14; }
+            0o070 => { self.regs.s[i] = fp::from_f64(fp::to_f64(self.regs.s[j]).recip()); self.sr_ready_at[i] = issued_at + 14; self.vfu_free_at[VFU_FPRECIP] = issued_at + 15; }
 
             // --- Scalar integer arithmetic; 3 CP ---
             // Si = Sj + Sk
