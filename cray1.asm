@@ -67,14 +67,14 @@
     ; Vector length and mask
     ; -----------------------------------------------------------------------
 
-    ; 020 VL = Ak
-    setvl {k: reg_a}          => 0b0010000`7 @ 0`6 @ k`3
+    ; 002 VL = Ak
+    setvl {k: reg_a}          => 0b0000010`7 @ 0`6 @ k`3
 
-    ; 033 VM = Sj
-    setvm {j: reg_s}           => 0b0011011`7 @ 0`3 @ j`3 @ 0`3
+    ; 003 VM = Sj (j≠0), or VM = 0 (j=0)
+    setvm {j: reg_s}           => 0b0000011`7 @ 0`3 @ j`3 @ 0`3
 
-    ; 034 VM = 0
-    clrvm                      => 0b0011100`7 @ 0`9
+    ; 003 VM = 0  (j=0 form of opcode 003)
+    clrvm                      => 0b0000011`7 @ 0`9
 
     ; 073 Si = VM
     vmread {i: reg_s}          => 0b0111011`7 @ i`3 @ 0`6
@@ -96,8 +96,8 @@
     ; 022 Ai = jk: load 6-bit constant into Ai (single parcel)
     ai {i: reg_a}, {v: u6}               => 0b0010010`7 @ i`3 @ v`6
 
-    ; 021 Ai = v: load 22-bit constant into Ai (long)
-    ai_l {i: reg_a}, {v: u22}            => 0b0010001`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
+    ; 020 Ai = v: load 22-bit constant into Ai (long)
+    ai_l {i: reg_a}, {v: u22}            => 0b0010000`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
 
     ; 030 Ai = Aj + Ak
     aadd {i: reg_a}, {j: reg_a}, {k: reg_a}   => 0b0011000`7 @ i`3 @ j`3 @ k`3
@@ -138,8 +138,8 @@
     ; 040 Si = v: load 22-bit zero-extended constant into Si (long)
     si {i: reg_s}, {v: u22}              => 0b0100000`7 @ i`3 @ (v >> 16)`6  @ (v & 0xffff)`16
 
-    ; 041 Si = v: load 22-bit sign-extended constant into Si (long)
-    sis {i: reg_s}, {v: s22}             => 0b0100001`7 @ i`3 @ ((v >> 16) & 0x3f)`6 @ (v & 0xffff)`16
+    ; 041 Si = ~v: load 1's complement of 22-bit constant into Si (long)
+    sinot {i: reg_s}, {v: u22}           => 0b0100001`7 @ i`3 @ (v >> 16)`6 @ (v & 0xffff)`16
 
     ; 043 Si = 0
     sclr {i: reg_s}                      => 0b0100011`7 @ i`3 @ 0`6
@@ -185,8 +185,8 @@
     sxeqv {i: reg_s}, {j: reg_s}, {k: reg_s}  => 0b0100111`7 @ i`3 @ j`3 @ k`3
     ; 050 Si = (Si & ~Sk) | (Sj & Sk)
     smerge  {i: reg_s}, {j: reg_s}, {k: reg_s} => 0b0101000`7 @ i`3 @ j`3 @ k`3
-    ; 051 Si = (Si & ~mask) | (Sj & mask)  where mask = sign bit of Sj broadcast to all bits
-    smerges {i: reg_s}, {j: reg_s}             => 0b0101001`7 @ i`3 @ j`3 @ 0`3
+    ; 051 Si = Sj | Sk (logical OR)
+    sor {i: reg_s}, {j: reg_s}, {k: reg_s}    => 0b0101001`7 @ i`3 @ j`3 @ k`3
 
     ; -----------------------------------------------------------------------
     ; Scalar floating point

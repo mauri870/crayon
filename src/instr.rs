@@ -53,8 +53,8 @@ fn is_long(opcode: u8, i: u8) -> bool {
         0o05 => i != 0,
         // Conditional branches (JAZ, JAN, JAP, JAM, JSZ, JSN, JSP, JSM)
         0o10..=0o17 => true,
-        // Transmit 22-bit constant to A register (single-parcel 0o20=VL=Ak excluded)
-        0o21 => true,
+        // Transmit 22-bit constant to A register (zero-extended or 1's complement)
+        0o20 | 0o21 => true,
         // Transmit 22-bit constant to S register (zero-extended or sign-extended)
         0o40 | 0o41 => true,
         // Memory read/store with explicit word address

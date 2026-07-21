@@ -162,13 +162,14 @@ impl Cpu {
             0o010..=0o013                => [self.ar_ready_at[0], 0],
             // Conditional branches on S0 gate on sr_ready_at[0].
             0o014..=0o017                => [self.sr_ready_at[0], 0],
-            0o020                        => [self.ar_ready_at[k], 0],
+            0o002                        => [self.ar_ready_at[k], 0],
+            0o003                        => [self.sr_ready_at[j], 0],
             0o025                        => [self.ar_ready_at[i], 0],
             0o026 | 0o027                => [self.sr_ready_at[j], 0],
             0o030 | 0o031 | 0o032        => [self.ar_ready_at[j], self.ar_ready_at[k]],
             0o044..=0o047                => [self.sr_ready_at[j], self.sr_ready_at[k]],
             0o050                        => [self.sr_ready_at[i].max(self.sr_ready_at[j]), self.sr_ready_at[k]],
-            0o051                        => [self.sr_ready_at[i], self.sr_ready_at[j]],
+            0o051                        => [self.sr_ready_at[j], self.sr_ready_at[k]],
             0o052 | 0o053                => [self.sr_ready_at[i], 0],
             0o054 | 0o055                => [self.sr_ready_at[i], 0],
             0o056 | 0o057                => [self.sr_ready_at[i].max(self.sr_ready_at[j]), self.ar_ready_at[k]],
@@ -244,21 +245,21 @@ impl Cpu {
             0o017 => if (self.regs.s[0] as i64) < 0                     { self.regs.p = d.addr25; }
 
             // VL: transmit (Ak) to VL register
-            0o020 => self.regs.write_vl(self.regs.a[k] as u8),
-            // VM: transmit (Sj) to VM
-            0o033 => self.regs.vm = self.regs.s[j],
-            // VM: clear VM
-            0o034 => self.regs.vm = 0,
+            0o002 => self.regs.write_vl(self.regs.a[k] as u8),
+            // VM: transmit Sj to VM if j≠0, else clear VM (j=0)
+            0o003 => { if j == 0 { self.regs.vm = 0; } else { self.regs.vm = self.regs.s[j]; } }
 
             // --- Address register transmit ---
-            // Ai = sign-extended 22-bit constant (addr22)
-            0o021 => { self.regs.write_a(i, d.addr22); self.ar_ready_at[i] = 0; }
-            // Ai = jk (6-bit constant from same parcel)
-            0o022 => { self.regs.write_a(i, d.jk as u32); self.ar_ready_at[i] = 0; }
-            // Ai = Sj (lower 24 bits)
-            0o023 => { self.regs.write_a(i, self.regs.s[j] as u32); self.ar_ready_at[i] = 0; }
-            // Ai = Bjk
-            0o024 => { self.regs.write_a(i, self.regs.b[j << 3 | k]); self.ar_ready_at[i] = 0; }
+            // Ai = 22-bit constant (zero-extended to 24 bits); 1 CP
+            0o020 => { self.regs.write_a(i, d.addr22); self.ar_ready_at[i] = issued_at + 1; }
+            // Ai = 1's complement of 22-bit constant; 1 CP
+            0o021 => { self.regs.write_a(i, !d.addr22 & ADDR_MASK); self.ar_ready_at[i] = issued_at + 1; }
+            // Ai = jk (6-bit constant from same parcel); 1 CP
+            0o022 => { self.regs.write_a(i, d.jk as u32); self.ar_ready_at[i] = issued_at + 1; }
+            // Ai = Sj (lower 24 bits); 1 CP
+            0o023 => { self.regs.write_a(i, self.regs.s[j] as u32); self.ar_ready_at[i] = issued_at + 1; }
+            // Ai = Bjk; 1 CP
+            0o024 => { self.regs.write_a(i, self.regs.b[j << 3 | k]); self.ar_ready_at[i] = issued_at + 1; }
             // Bjk = Ai
             0o025 => self.regs.write_b(j << 3 | k, self.regs.a[i]),
 
@@ -277,36 +278,36 @@ impl Cpu {
             0o032 => { self.regs.write_a(i, self.regs.a[j].wrapping_mul(self.regs.a[k])); self.ar_ready_at[i] = issued_at + 6; }
 
             // --- Scalar transmit ---
-            // Si = 22-bit constant (zero-extended)
-            0o040 => { self.regs.s[i] = d.addr22 as u64; self.sr_ready_at[i] = 0; }
-            // Si = 22-bit constant (sign-extended)
-            0o041 => { self.regs.s[i] = (((d.addr22 as i32) << 10) >> 10) as i64 as u64; self.sr_ready_at[i] = 0; }
-            // Si = 0
-            0o043 => { self.regs.s[i] = 0; self.sr_ready_at[i] = 0; }
-            // Si = Ak (zero-extended from 24-bit)
-            0o071 if d.j == 0 => { self.regs.s[i] = self.regs.a[k] as u64; self.sr_ready_at[i] = 0; }
-            // Si = Ak (sign-extended from 24-bit)
-            0o071 if d.j == 1 => { self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64; self.sr_ready_at[i] = 0; }
-            // Si = Ak as unnormalized floating point (j=2)
-            0o071 if d.j == 2 => { self.regs.s[i] = fp::from_f64(self.regs.a[k] as f64); self.sr_ready_at[i] = 0; }
-            // Si = Tjk
-            0o074 => { self.regs.s[i] = self.regs.t[j << 3 | k]; self.sr_ready_at[i] = 0; }
+            // Si = 22-bit constant (zero-extended); 1 CP
+            0o040 => { self.regs.s[i] = d.addr22 as u64; self.sr_ready_at[i] = issued_at + 1; }
+            // Si = 1's complement of 22-bit constant; 1 CP
+            0o041 => { self.regs.s[i] = !(d.addr22 as u64); self.sr_ready_at[i] = issued_at + 1; }
+            // Si = 0; 1 CP
+            0o043 => { self.regs.s[i] = 0; self.sr_ready_at[i] = issued_at + 1; }
+            // Si = Ak (zero-extended from 24-bit); 2 CP
+            0o071 if d.j == 0 => { self.regs.s[i] = self.regs.a[k] as u64; self.sr_ready_at[i] = issued_at + 2; }
+            // Si = Ak (sign-extended from 24-bit); 2 CP
+            0o071 if d.j == 1 => { self.regs.s[i] = self.regs.a[k] as i32 as i64 as u64; self.sr_ready_at[i] = issued_at + 2; }
+            // Si = Ak as unnormalized floating point (j=2); 2 CP
+            0o071 if d.j == 2 => { self.regs.s[i] = fp::from_f64(self.regs.a[k] as f64); self.sr_ready_at[i] = issued_at + 2; }
+            // Si = Tjk; 1 CP
+            0o074 => { self.regs.s[i] = self.regs.t[j << 3 | k]; self.sr_ready_at[i] = issued_at + 1; }
             // Tjk = Si
             0o075 => self.regs.t[j << 3 | k] = self.regs.s[i],
-            // Si = VM
-            0o073 => { self.regs.s[i] = self.regs.vm; self.sr_ready_at[i] = 0; }
-            // Si = Vj[Ak]
+            // Si = VM; 1 CP
+            0o073 => { self.regs.s[i] = self.regs.vm; self.sr_ready_at[i] = issued_at + 1; }
+            // Si = Vj[Ak]; 5 CP
             0o076 => {
                 let elem = self.regs.a[k] as usize & 63;
                 self.regs.s[i] = self.regs.v[j][elem];
-                self.sr_ready_at[i] = 0;
+                self.sr_ready_at[i] = issued_at + 5;
             }
-            // Vi[Ak] = Sj
+            // Vi[Ak] = Sj; 3 CP
             0o077 => {
                 let elem = self.regs.a[k] as usize & 63;
                 self.regs.v[i][elem] = self.regs.s[j];
-                self.vr_chain_at[i] = issued_at + 1;
-                self.vr_ready_at[i] = issued_at + 1;
+                self.vr_chain_at[i] = issued_at + 3;
+                self.vr_ready_at[i] = issued_at + 3;
             }
 
             // --- Scalar floating point (0o062-0o070); latencies: add=6, mul=7, recip=14 CP ---
@@ -342,12 +343,8 @@ impl Cpu {
             0o047 => { self.regs.s[i] = !(self.regs.s[j] ^ self.regs.s[k]); self.sr_ready_at[i] = issued_at + 1; }
             // Si = (Si & ~Sk) | (Sj & Sk)  (merge: select Sj where Sk=1, Si where Sk=0)
             0o050 => { self.regs.s[i] = (self.regs.s[i] & !self.regs.s[k]) | (self.regs.s[j] & self.regs.s[k]); self.sr_ready_at[i] = issued_at + 1; }
-            // Si = (Si & ~mask) | (Sj & mask) where mask = sign bit of Sj broadcast
-            0o051 => {
-                let mask = ((self.regs.s[j] as i64) >> 63) as u64;
-                self.regs.s[i] = (self.regs.s[i] & !mask) | (self.regs.s[j] & mask);
-                self.sr_ready_at[i] = issued_at + 1;
-            }
+            // Si = Sj | Sk (logical OR)
+            0o051 => { self.regs.s[i] = self.regs.s[j] | self.regs.s[k]; self.sr_ready_at[i] = issued_at + 1; }
 
             // --- Scalar shifts; immediate=2 CP, register=3 CP ---
             // S0 = Si << jk
@@ -387,7 +384,7 @@ impl Cpu {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.write_a(i, self.mem.read(addr) as u32);
-                self.ar_ready_at[i] = issued_at + 7;
+                self.ar_ready_at[i] = issued_at + 11;
             }
             0o110..=0o117 => {
                 let base = self.regs.a[h];
@@ -398,7 +395,7 @@ impl Cpu {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.s[i] = self.mem.read(addr);
-                self.sr_ready_at[i] = issued_at + 7;
+                self.sr_ready_at[i] = issued_at + 11;
             }
             0o130..=0o137 => {
                 let base = self.regs.a[h];
@@ -918,7 +915,7 @@ mod tests {
     fn vector_add_vv() {
         // V0 = V1 + V2 element-wise with VL=4
         let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
-        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [b0, b1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o155, 0, 1, 2);  // V0 = V1 + V2
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
@@ -934,7 +931,7 @@ mod tests {
     fn vector_add_sv() {
         // V0 = S1 + V2 (scalar broadcast) with VL=3
         let [a0, a1] = parcel_jk(0o22, 1, 3);   // A1 = 3
-        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [b0, b1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o154, 0, 1, 2);  // V0 = S1 + V2
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
@@ -950,7 +947,7 @@ mod tests {
     fn vector_and_sv() {
         // V0 = S1 & V2 with VL=2
         let [a0, a1] = parcel_jk(0o22, 1, 2);   // A1 = 2
-        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [b0, b1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o140, 0, 1, 2);  // V0 = S1 & V2
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
@@ -969,7 +966,7 @@ mod tests {
         // V0 = V1 << A2 with VL=2, A2=3
         let [a0, a1] = parcel_jk(0o22, 1, 2);   // A1 = 2 (VL)
         let [b0, b1] = parcel_jk(0o22, 2, 3);   // A2 = 3 (shift count)
-        let [c0, c1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [d0, d1] = parcel(0o150, 0, 1, 2);  // V0 = V1 << A2
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0,a1,b0,b1,c0,c1,d0,d1,x0,x1, 0,0,0,0,0,0]);
@@ -984,7 +981,7 @@ mod tests {
     fn vector_mask_test_zero() {
         // vmtest_z on V1=[0,5,0,3] with VL=4 -> VM bits set for elements 0 and 2
         let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
-        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [b0, b1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o175, 0, 1, 0);  // VM = (V1[n]==0)
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
@@ -1002,7 +999,7 @@ mod tests {
     fn vector_merge_vv() {
         // V0 = VM ? V1 : V2 with VL=4; VM selects elements 0 and 2 from V1
         let [a0, a1] = parcel_jk(0o22, 1, 4);   // A1 = 4
-        let [b0, b1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [b0, b1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [c0, c1] = parcel(0o147, 0, 1, 2);  // V0 = VM ? V1 : V2
         let [x0, x1] = parcel(0o04, 0, 0, 0);
         let mut cpu = cpu_with_program(&[a0, a1, b0, b1, c0, c1, x0, x1]);
@@ -1023,7 +1020,7 @@ mod tests {
         // vstore V1[0..3] to words 50,51,52; vload into V2; check match
         let [a0, a1] = parcel_jk(0o22, 0, 50);  // A0 = 50 (base address)
         let [b0, b1] = parcel_jk(0o22, 1, 3);   // A1 = 3
-        let [c0, c1] = parcel(0o20, 0, 0, 1);   // VL = A1
+        let [c0, c1] = parcel(0o02, 0, 0, 1);   // VL = A1
         let [d0, d1] = parcel(0o177, 0, 1, 0);  // vstore V1 stride=1
         let [e0, e1] = parcel(0o176, 2, 0, 0);  // vload  V2 stride=1
         let [x0, x1] = parcel(0o04, 0, 0, 0);

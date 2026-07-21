@@ -69,3 +69,5 @@ The ruleset is defined in `cray1.asm` and embedded in the binary. See the [examp
 Cray Research, Inc. [*The CRAY-1 Computer System*](https://s3data.computerhistory.org/brochures/cray.cray1.1977.102638650.pdf) (1977), publication number 2240008 8.
 
 Cray Research, Inc. [*CRAY-1 Hardware Reference Manual*](https://bitsavers.trailing-edge.com/pdf/cray/CRAY-1/2240004C_CRAY-1_Hardware_Reference_Nov77.pdf) (November 1977), publication number 2240004C.
+
+Cray Research, Inc. [*CRAY-1 Computer Systems Hardware Reference Manual*](https://www.mrynet.com/cray/HR-0004-CRAY_1_Hardware_Reference_Manual-January_1976.OCR.pdf) (January 1976, revised through May 1982), publication number HR-0004. More detailed than the 2240004C edition; covers I/O channel programming, the exchange mechanism, and all instruction timings.
