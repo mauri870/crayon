@@ -64,6 +64,8 @@ cargo test
 Programs are written in [customasm](https://github.com/hlorenzi/customasm) syntax.
 The ruleset is defined in `cray1.asm` and embedded in the binary. See the [examples](examples) folder.
 
+The mnemonics (`si`, `sadd`, `vfmul`, etc.) are not historical, the original Cray Assembly Language (CAL) used expression syntax rather than named mnemonics. The names here follow a simple convention: a prefix letter for the register class (`a`, `s`, `v`) plus a short operation name.
+
 ## References
 
 Cray Research, Inc. [*The CRAY-1 Computer System*](https://s3data.computerhistory.org/brochures/cray.cray1.1977.102638650.pdf) (1977), publication number 2240008 8.
