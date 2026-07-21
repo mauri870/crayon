@@ -1,6 +1,6 @@
 # crayon
 
-A CPU emulator for the CRAY-1 supercomputer.
+A cycle-accurate CPU emulator for the CRAY-1 supercomputer.
 
 <p align="center">
   <img src="cray1.png" alt="Cray-1" width="400">
@@ -62,7 +62,7 @@ cargo test
 ```
 
 Programs are written in [customasm](https://github.com/hlorenzi/customasm) syntax.
-The ruleset is defined in `cray1.asm` and embedded in the binary. See [examples](examples) folder.
+The ruleset is defined in `cray1.asm` and embedded in the binary. See the [examples](examples) folder.
 
 ## References
 
