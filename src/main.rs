@@ -103,19 +103,26 @@ fn main() {
 
     let sleep_dur = slow_hz.map(|hz| Duration::from_secs_f64(1.0 / hz));
     let live = step || watch;
+    let frame_dur = if watch { Some(Duration::from_secs_f64(1.0 / 30.0)) } else { None };
+    let mut last_draw = Instant::now();
     let stdin = io::stdin();
 
     loop {
         match cpu.step() {
             Ok(()) => {
                 if live {
-                    print!("\x1b[2J\x1b[H");
-                    println!("cycle {}  P={:06X}", cpu.cycle, cpu.regs.p);
-                    print!("{}", cpu.regs);
-                    if step {
-                        print!("> ");
+                    let now = Instant::now();
+                    let due = frame_dur.map_or(true, |d| now.duration_since(last_draw) >= d);
+                    if due {
+                        last_draw = now;
+                        print!("\x1b[2J\x1b[H");
+                        println!("cycle {}  P={:06X}", cpu.cycle, cpu.regs.p);
+                        print!("{}", cpu.regs);
+                        if step {
+                            print!("> ");
+                        }
+                        io::stdout().flush().ok();
                     }
-                    io::stdout().flush().ok();
                 }
                 if step {
                     let mut line = String::new();
