@@ -114,6 +114,8 @@ pub struct Cpu {
     vr_chain_at: [u64; 8],
     // Per vector functional unit: earliest cycle the unit is free for a new vector operation.
     vfu_free_at: [u64; 6],
+    // Per memory bank: earliest cycle the bank is free after an access (16 banks, addr % 16).
+    bank_free_at: [u64; 16],
 }
 
 impl Cpu {
@@ -128,7 +130,19 @@ impl Cpu {
             vr_ready_at: [0; 8],
             vr_chain_at: [0; 8],
             vfu_free_at: [0; 6],
+            bank_free_at: [0; 16],
         }
+    }
+
+    // Record a memory access issued at `issue_cycle` to word address `addr`.
+    // `startup` is the pipeline depth: 11 for scalar loads, 7 for vector loads.
+    // The bank is busy for 11 cycles regardless of startup.
+    // Returns the cycle when the result is ready (may be delayed by bank conflict).
+    fn mem_access(&mut self, issue_cycle: u64, addr: u32, startup: u64) -> u64 {
+        let bank = (addr as usize) & 15;
+        let start = issue_cycle.max(self.bank_free_at[bank]);
+        self.bank_free_at[bank] = start + 11;
+        start + startup
     }
 
     // Execute one instruction. Returns Err(Trap) when execution should stop.
@@ -384,23 +398,25 @@ impl Cpu {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.write_a(i, self.mem.read(addr) as u32);
-                self.ar_ready_at[i] = issued_at + 11;
+                self.ar_ready_at[i] = self.mem_access(issued_at, addr, 11);
             }
             0o110..=0o117 => {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.a[i] as u64);
+                self.mem_access(issued_at, addr, 11);
             }
             0o120..=0o127 => {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.regs.s[i] = self.mem.read(addr);
-                self.sr_ready_at[i] = issued_at + 11;
+                self.sr_ready_at[i] = self.mem_access(issued_at, addr, 11);
             }
             0o130..=0o137 => {
                 let base = self.regs.a[h];
                 let addr = base.wrapping_add(d.addr22) & ADDR_MASK;
                 self.mem.write(addr, self.regs.s[i]);
+                self.mem_access(issued_at, addr, 11);
             }
 
             // --- Vector floating point multiply (0o160-0o167); startup=7 CP ---
@@ -515,12 +531,22 @@ impl Cpu {
                 let vl = self.regs.vl as usize;
                 let base = self.regs.a[0];
                 let stride = if k == 0 { 1 } else { self.regs.a[k] };
+                let mut first_ready = u64::MAX;
+                let mut last_ready = issued_at;
                 for n in 0..vl {
                     let addr = base.wrapping_add(stride.wrapping_mul(n as u32)) & ADDR_MASK;
+                    let ready = self.mem_access(issued_at + n as u64, addr, 7);
                     self.regs.v[i][n] = self.mem.read(addr);
+                    if ready < first_ready { first_ready = ready; }
+                    if ready > last_ready { last_ready = ready; }
                 }
-                self.vr_chain_at[i] = issued_at + 9;
-                self.vr_ready_at[i] = issued_at + 7 + vl.saturating_sub(1) as u64;
+                if vl == 0 {
+                    self.vr_chain_at[i] = issued_at + 2;
+                    self.vr_ready_at[i] = issued_at;
+                } else {
+                    self.vr_chain_at[i] = first_ready + 2;
+                    self.vr_ready_at[i] = last_ready;
+                }
             }
             0o177 => {
                 let vl = self.regs.vl as usize;
@@ -529,6 +555,7 @@ impl Cpu {
                 for n in 0..vl {
                     let addr = base.wrapping_add(stride.wrapping_mul(n as u32)) & ADDR_MASK;
                     self.mem.write(addr, self.regs.v[j][n]);
+                    self.mem_access(issued_at + n as u64, addr, 11);
                 }
             }
 
