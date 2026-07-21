@@ -6,6 +6,19 @@ use crayon::assembler::assemble;
 use crayon::cpu::{Cpu, Trap};
 use crayon::memory::Memory;
 
+fn print_help(prog: &str) {
+    println!("usage: {prog} [options] <program.asm|program.bin>");
+    println!();
+    println!("  .asm          assembled with the cray-1 ruleset, then run");
+    println!("  .bin          loaded as a flat big-endian binary, then run");
+    println!();
+    println!("options:");
+    println!("  -h, --help        print this help");
+    println!("  --step            pause after each instruction; Enter to advance, q to quit");
+    println!("  --watch           live register display updated after each instruction");
+    println!("  --speed <n>       throttle to <n> instructions per second");
+}
+
 fn fmt_ns(ns: u64) -> String {
     if ns < 1_000 {
         format!("{ns}ns")
@@ -29,6 +42,10 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "-h" | "--help" => {
+                print_help(&args[0]);
+                process::exit(0);
+            }
             "--step" => step = true,
             "--watch" => watch = true,
             "--speed" => {
@@ -58,13 +75,7 @@ fn main() {
     }
 
     let path = path.unwrap_or_else(|| {
-        eprintln!("usage: {} [--step] [--watch] [--speed <n>] <program.asm|program.bin>", args[0]);
-        eprintln!();
-        eprintln!("  .asm          assembled with the cray-1 ruleset, then run");
-        eprintln!("  .bin          loaded as a flat big-endian binary, then run");
-        eprintln!("  --step        pause after each instruction; Enter to advance, q to quit");
-        eprintln!("  --watch       live register display updated after each instruction");
-        eprintln!("  --speed <n>      throttle to <n> instructions per second");
+        print_help(&args[0]);
         process::exit(1);
     });
 
