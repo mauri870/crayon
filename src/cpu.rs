@@ -541,22 +541,41 @@ impl Cpu {
 
 impl fmt::Display for Registers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "A  {:06X} {:06X} {:06X} {:06X} {:06X} {:06X} {:06X} {:06X}",
+        // A registers
+        writeln!(f, "A  {:06X} {:06X} {:06X} {:06X}  {:06X} {:06X} {:06X} {:06X}",
             self.a[0], self.a[1], self.a[2], self.a[3],
             self.a[4], self.a[5], self.a[6], self.a[7])?;
-        writeln!(f, "S  {:016X} {:016X} {:016X} {:016X}",
+
+        // S registers
+        writeln!(f, "S  S0={:016X}  S1={:016X}  S2={:016X}  S3={:016X}",
             self.s[0], self.s[1], self.s[2], self.s[3])?;
-        writeln!(f, "   {:016X} {:016X} {:016X} {:016X}",
+        writeln!(f, "   S4={:016X}  S5={:016X}  S6={:016X}  S7={:016X}",
             self.s[4], self.s[5], self.s[6], self.s[7])?;
-        writeln!(f, "V  (V0-V7, {} element{} each)",
-            self.vl, if self.vl == 1 { "" } else { "s" })?;
-        for i in 0..8 {
-            write!(f, "   V{i}")?;
-            for j in 0..self.vl as usize {
-                write!(f, " {:016X}", self.v[i][j])?;
+
+        // V registers
+        let vl = self.vl as usize;
+        if vl == 0 {
+            writeln!(f, "V  (VL=0)")?;
+        } else {
+            let step_by = 16;
+            for i in 0..8usize {
+                let mut first = true;
+                for start in (0..vl).step_by(step_by) {
+                    let end = (start + step_by).min(vl);
+                    if first {
+                        write!(f, "V{i} [{start:02X}-{:02X}]", end - 1)?;
+                        first = false;
+                    } else {
+                        write!(f, "   [{start:02X}-{:02X}]", end - 1)?;
+                    }
+                    for e in start..end {
+                        write!(f, " {:016X}", self.v[i][e])?;
+                    }
+                    writeln!(f)?;
+                }
             }
-            writeln!(f)?;
         }
+
         writeln!(f, "VL {:02X}  VM {:016X}  P {:06X}  RTC {:016X}",
             self.vl, self.vm, self.p, self.rtc)
     }
