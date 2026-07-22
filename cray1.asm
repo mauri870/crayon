@@ -76,6 +76,9 @@
     ; 003 VM = 0  (j=0 form of opcode 003)
     clrvm                      => 0b0000011`7 @ 0`9
 
+    ; 072 Si = RTC
+    srtc {i: reg_s}            => 0b0111010`7 @ i`3 @ 0`6
+
     ; 073 Si = VM
     vmread {i: reg_s}          => 0b0111011`7 @ i`3 @ 0`6
 
@@ -141,8 +144,12 @@
     ; 041 Si = ~v: load 1's complement of 22-bit constant into Si (long)
     sinot {i: reg_s}, {v: u22}           => 0b0100001`7 @ i`3 @ (v >> 16)`6 @ (v & 0xffff)`16
 
-    ; 043 Si = 0
+    ; 042 Si = (64-jk) right-justified ones (LSBs)
+    smaskr {i: reg_s}, {jk: u6}          => 0b0100010`7 @ i`3 @ jk`6
+
+    ; 043 Si = jk left-justified ones (MSBs); jk=0 => Si = 0
     sclr {i: reg_s}                      => 0b0100011`7 @ i`3 @ 0`6
+    smaskl {i: reg_s}, {jk: u6}          => 0b0100011`7 @ i`3 @ jk`6
 
     ; 071 Si = Ak (zero-extend from 24-bit)
     s_a {i: reg_s}, {k: reg_a}           => 0b0111001`7 @ i`3 @ 0b000`3 @ k`3

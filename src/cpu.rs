@@ -296,8 +296,10 @@ impl Cpu {
             0o040 => { self.regs.s[i] = d.addr22 as u64; self.sr_ready_at[i] = issued_at + 1; }
             // Si = 1's complement of 22-bit constant; 1 CP
             0o041 => { self.regs.s[i] = !(d.addr22 as u64); self.sr_ready_at[i] = issued_at + 1; }
-            // Si = 0; 1 CP
-            0o043 => { self.regs.s[i] = 0; self.sr_ready_at[i] = issued_at + 1; }
+            // Si = (64-jk) right-justified ones; jk=0 → all ones; 1 CP
+            0o042 => { self.regs.s[i] = u64::MAX >> (d.jk as u32); self.sr_ready_at[i] = issued_at + 1; }
+            // Si = jk left-justified ones; jk=0 → 0; 1 CP
+            0o043 => { self.regs.s[i] = if d.jk == 0 { 0 } else { u64::MAX << (64 - d.jk as u32) }; self.sr_ready_at[i] = issued_at + 1; }
             // Si = Ak (zero-extended from 24-bit); 2 CP
             0o071 if d.j == 0 => { self.regs.s[i] = self.regs.a[k] as u64; self.sr_ready_at[i] = issued_at + 2; }
             // Si = Ak (sign-extended from 24-bit); 2 CP
@@ -308,6 +310,8 @@ impl Cpu {
             0o074 => { self.regs.s[i] = self.regs.t[j << 3 | k]; self.sr_ready_at[i] = issued_at + 1; }
             // Tjk = Si
             0o075 => self.regs.t[j << 3 | k] = self.regs.s[i],
+            // Si = RTC; 1 CP
+            0o072 => { self.regs.s[i] = self.regs.rtc; self.sr_ready_at[i] = issued_at + 1; }
             // Si = VM; 1 CP
             0o073 => { self.regs.s[i] = self.regs.vm; self.sr_ready_at[i] = issued_at + 1; }
             // Si = Vj[Ak]; 5 CP
